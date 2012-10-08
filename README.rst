@@ -3,8 +3,11 @@ cafmux - CoreAudioToolbox remuxer (win32)
 =========================================
 
 Remux audio files with the help of Audio File Services of CoreAudioToolbox.
-Usage: cafmux -p  (prints available formats)
-       cafmux INFILE OUTFILE
+
+Usage:
+    cafmux -p  (prints available formats)
+
+    cafmux INFILE OUTFILE
 
 Notice
 ------
