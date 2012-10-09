@@ -5,9 +5,11 @@ cafmux - CoreAudioToolbox remuxer (win32)
 Remux audio files with the help of Audio File Services of CoreAudioToolbox.
 
 Usage:
-    cafmux -p  (prints available formats)
+       cafmux -p             (print available formats)
 
-    cafmux INFILE OUTFILE
+       cafmux -i INFILE      (print audio format of INFILE)
+
+       cafmux INFILE OUTFILE (remux INFILE to OUTFILE)
 
 Notice
 ------

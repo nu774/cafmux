@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <stdint.h>
 #include "CoreAudio/AudioFile.h"
+#include "CoreAudio/AudioFormat.h"
 #include "strutil.h"
 
 #define FOURCC(a,b,c,d) (((a)<<24)|((b)<<16)|((c)<<8)|(d))
@@ -25,6 +26,12 @@ public:
 	m_error_code = code;
     }
     long code() const { return m_error_code; }
+    bool isNotSupportedError() const
+    {
+	return m_error_code ==
+	    (FOURCC('t','y','p','?') || FOURCC('f','m','t','?') ||
+	     FOURCC('p','t','y','?') || FOURCC('c','h','k','?'));
+    }
 };
 
 #define CHECKCA(expr) \
@@ -132,8 +139,17 @@ namespace afutil {
 	}
 	vec->swap(result);
     }
+    std::wstring getASBDFormatName(const AudioStreamBasicDescription *asbd)
+    {
+	CFStringRef s;
+	UInt32 size = sizeof(s);
+	CHECKCA(AudioFormatGetProperty(kAudioFormatProperty_FormatName,
+				       sizeof(*asbd), asbd,
+				       &size, &s));
+	CFStringPtr _(s, CFRelease);
+	return CF2W(s);
+    }
 }
-
 
 class AudioFileX {
     std::shared_ptr<OpaqueAudioFileID> m_file;

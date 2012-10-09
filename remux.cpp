@@ -8,6 +8,7 @@
 #include "utf8_codecvt_facet.hpp"
 #include "strutil.h"
 #include "AudioFileX.h"
+#include "version.h"
 
 #define fseeko _fseeki64
 
@@ -262,8 +263,7 @@ void setup_audiofile(AudioFileX &iaf, AudioFileX &oaf)
 	iaf.getChannelLayout(&acl);
 	oaf.setChannelLayout(acl.get());
     } catch (const CoreAudioException &e) {
-	if (e.code() != FOURCC('c','h','k','?') &&
-	    e.code() != FOURCC('p','t','y','?'))
+	if (!e.isNotSupportedError())
 	    throw;
     }
 
@@ -273,30 +273,47 @@ void setup_audiofile(AudioFileX &iaf, AudioFileX &oaf)
 	if (cookie.size())
 	    oaf.setMagicCookieData(&cookie[0], cookie.size());
     } catch (const CoreAudioException &e) {
-	if (e.code() != FOURCC('c','h','k','?') &&
-	    e.code() != FOURCC('p','t','y','?'))
+	if (!e.isNotSupportedError())
 	    throw;
     }
     try {
 	CFDictionaryPtr dict = iaf.getInfoDictionary();
 	oaf.setInfoDictionary(dict.get());
     } catch (const CoreAudioException &e) {
-	if (e.code() != FOURCC('c','h','k','?') &&
-	    e.code() != FOURCC('p','t','y','?'))
+	if (!e.isNotSupportedError())
 	    throw;
     }
 
     try {
 	oaf.setReserveDuration(length_in_seconds);
     } catch (const CoreAudioException &e) {
-	if (e.code() != FOURCC('c','h','k','?') &&
-	    e.code() != FOURCC('p','t','y','?'))
+	if (!e.isNotSupportedError())
 	    throw;
     }
 }
 
 static
-void process(const std::wstring ifilename, const std::wstring ofilename,
+void show_format(const std::wstring &ifilename)
+{
+    std::shared_ptr<FILE> ifp(util::open_file(ifilename, L"rb"));
+
+    AudioFileID iafid;
+    try {
+	CHECKCA(AudioFileOpenWithCallbacks(ifp.get(), callback::read, 0, 
+					   callback::size, 0, 0, &iafid));
+    } catch (const CoreAudioException &e) {
+	std::stringstream ss;
+	ss << strutil::w2m(ifilename) << ": " << e.what();
+	throw std::runtime_error(ss.str());
+    }
+    AudioFileX iaf(iafid, true);
+    AudioStreamBasicDescription asbd;
+    iaf.getDataFormat(&asbd);
+    std::wprintf(L"%s\n", afutil::getASBDFormatName(&asbd).c_str());
+}
+
+static
+void process(const std::wstring &ifilename, const std::wstring &ofilename,
 	     uint32_t oformat)
 {
     std::shared_ptr<FILE> ifp(util::open_file(ifilename, L"rb"));
@@ -317,9 +334,6 @@ void process(const std::wstring ifilename, const std::wstring ofilename,
     if (oformat == kAudioFileAIFFType &&
 	asbd.mFormatID != FOURCC('l','p','c','m'))
 	oformat = kAudioFileAIFCType;
-    if (asbd.mFormatID == FOURCC('a','l','a','c') &&
-	oformat == kAudioFileMPEG4Type)
-	oformat = kAudioFileM4AType;
 
     std::shared_ptr<FILE> ofp(util::open_file(ofilename, L"wb+"));
     AudioFileID oafid;
@@ -334,6 +348,11 @@ void process(const std::wstring ifilename, const std::wstring ofilename,
     } catch (const CoreAudioException &e) {
 	std::stringstream ss;
 	ss << strutil::w2m(ofilename) << ": " << e.what();
+	if (e.code() == FOURCC('f','m','t','?')) {
+	    ss << "\n" << "Data format: ";
+	    ss << strutil::w2m(afutil::getASBDFormatName(&asbd),
+			       utf8_codecvt_facet());
+	}
 	ofp.reset();
 	DeleteFileW(ofilename.c_str());
 	throw std::runtime_error(ss.str());
@@ -359,8 +378,7 @@ void process(const std::wstring ifilename, const std::wstring ofilename,
 	try {
 	    iaf.getPacketTableInfo(&packet_table);
 	} catch (const CoreAudioException &e) {
-	    if (e.code() != FOURCC('c','h','k','?') &&
-		e.code() != FOURCC('p','t','y','?'))
+	    if (!e.isNotSupportedError())
 		throw;
 	}
 	uint32_t iformat = iaf.getFileFormat();
@@ -422,8 +440,9 @@ void process(const std::wstring ifilename, const std::wstring ofilename,
 	if (packet_table.mPrimingFrames || packet_table.mRemainderFrames) {
 	    try {
 		oaf.setPacketTableInfo(&packet_table);
-	    } catch (...) {
-		//
+	    } catch (const CoreAudioException &e) {
+		if (!e.isNotSupportedError())
+		    throw;
 	    }
 	}
     } catch (...) {
@@ -508,10 +527,12 @@ FARPROC WINAPI dll_failure_hook(unsigned notify, PDelayLoadInfo pdli)
 
 void usage()
 {
-    fputws(
-L"usage: cafmux -p  (print available formats)\n"
-L"       cafmux INFILE OUTFILE\n"
-    , stderr);
+    std::fwprintf(stderr,
+L"cafmux %hs\n"
+L"usage: cafmux -p             (print available formats)\n"
+L"       cafmux -i INFILE      (print audio format of INFILE)\n"
+L"       cafmux INFILE OUTFILE (remux INFILE to OUTFILE)\n"
+    , cafmux_version);
     std::exit(1);
 }
 
@@ -520,28 +541,39 @@ int wmain(int argc, wchar_t **argv)
     _setmode(1, _O_U8TEXT);
     _setmode(2, _O_U8TEXT);
 
-    wchar_t *opt_query = 0;
-
     bool opt_p = false;
+    wchar_t *opt_i = 0;
+
     for (++argv, --argc; *argv && **argv == '-'; ++argv, --argc) {
 	if (argv[0][1] == 'p')
 	    opt_p = true;
+	else if (argv[0][1] == 'i') {
+	    if (argv[0][2])
+		opt_i = argv[0] + 2;
+	    else if (argv[1]) {
+		opt_i = argv[1];
+		++argv, --argc;
+	    } else
+		usage();
+	}
     }
-    if (!opt_p && argc < 2)
+    if (!opt_p && !opt_i && argc < 2)
 	usage();
 
     try {
         set_dll_directories();
 	__pfnDliFailureHook2 = dll_failure_hook;
-	if (opt_p) {
+	if (opt_p)
 	    list_readable_types();
-	} else {
+	else if (opt_i)
+	    show_format(opt_i);
+	else {
 	    uint32_t type = afutil::getTypesForExtension(argv[1]);
 	    process(argv[0], argv[1], type);
 	}
 	return 0;
     } catch (const std::exception & e) {
-	fwprintf(stderr, L"ERROR: %s\n",
+	std::fwprintf(stderr, L"ERROR: %s\n",
 		 strutil::m2w(e.what(), utf8_codecvt_facet()));
 	return 2;
     }
