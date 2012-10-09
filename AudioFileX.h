@@ -28,9 +28,10 @@ public:
     long code() const { return m_error_code; }
     bool isNotSupportedError() const
     {
-	return m_error_code ==
-	    (FOURCC('t','y','p','?') || FOURCC('f','m','t','?') ||
-	     FOURCC('p','t','y','?') || FOURCC('c','h','k','?'));
+	return m_error_code == FOURCC('t','y','p','?') ||
+	       m_error_code == FOURCC('f','m','t','?') ||
+	       m_error_code == FOURCC('p','t','y','?') ||
+	       m_error_code == FOURCC('c','h','k','?');
     }
 };
 

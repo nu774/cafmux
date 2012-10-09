@@ -18,6 +18,11 @@ namespace util {
 	return _byteswap_ulong(n);
     }
 
+    inline uint64_t b2host64(uint64_t n)
+    {
+	return _byteswap_uint64(n);
+    }
+
     void throw_crt_error(const std::string &message)
     {
 	std::stringstream ss;
@@ -195,6 +200,7 @@ namespace mp4 {
 	bool result = false;
 	std::fgetpos(fp, &pos);
 	std::string data;
+	fseeko(fp, 0, SEEK_SET);
 	if ((result = get_iTunSMPB(fp, &data)) == true) {
 	    uint32_t a, b, c;
 	    uint64_t d;
@@ -209,6 +215,89 @@ namespace mp4 {
 	}
 	std::fsetpos(fp, &pos);
 	return result;
+    }
+}
+
+namespace caf {
+    uint64_t next_chunk(FILE *fp, char *name)
+    {
+	uint64_t size;
+	if (std::fread(name, 1, 4, fp) != 4 || std::fread(&size, 8, 1, fp) != 1)
+	    return 0;
+	return util::b2host64(size);
+    }
+    bool get_info(FILE *fp, std::vector<char> *info)
+    {
+	fpos_t pos;
+	std::fgetpos(fp, &pos);
+	fseeko(fp, 8, SEEK_SET);
+	uint64_t chunk_size;
+	char chunk_name[4];
+	bool found = false;
+	while ((chunk_size = next_chunk(fp, chunk_name)) > 0) {
+	    if (std::memcmp(chunk_name, "info", 4)) {
+		if (fseeko(fp, chunk_size, SEEK_CUR) != 0)
+		    break;
+	    } else {
+		std::vector<char> buf(chunk_size);
+		if (std::fread(&buf[0], 1, buf.size(), fp) != buf.size())
+		    break;
+		info->swap(buf);
+		found = true;
+		break;
+	    }
+	}
+	std::fsetpos(fp, &pos);
+	return found;
+    }
+    /*
+     * Loads CoreFoundation.dll constants.
+     * Since DATA cannot be delayimp-ed, we have to manually
+     * load it using .
+     */
+    void *load_cf_constant(const char *name)
+    {
+	HMODULE cf = GetModuleHandleA("CoreFoundation.dll");
+	if (!cf)
+	    util::throw_win32_error("CoreFouncation.dll", GetLastError());
+	return GetProcAddress(cf, name);
+    }
+    bool get_info_dictionary(FILE *fp, CFDictionaryPtr *dict)
+    {
+	std::vector<char> info;
+	if (!get_info(fp, &info) || info.size() < 4)
+	    return false;
+	// inside of info tag is delimited with NUL char.
+	std::vector<std::string> tokens;
+	{
+	    const char *infop = &info[0] + 4;
+	    const char *endp = &info[0] + info.size();
+	    do {
+		tokens.push_back(std::string(infop));
+		infop += tokens.back().size() + 1;
+	    } while (infop < endp);
+	}
+	// get some constants manually
+	const CFDictionaryKeyCallBacks *kcb
+	    = static_cast<const CFDictionaryKeyCallBacks *>(
+		load_cf_constant("kCFTypeDictionaryKeyCallBacks"));
+	const CFDictionaryValueCallBacks *vcb
+	    = static_cast<const CFDictionaryValueCallBacks *>(
+		load_cf_constant("kCFTypeDictionaryValueCallBacks"));
+
+	CFMutableDictionaryRef dictref =
+	    CFDictionaryCreateMutable(0, tokens.size() >> 1, kcb, vcb);
+	utf8_codecvt_facet u8codec;
+	CFDictionaryPtr dictptr(dictref, CFRelease);
+	for (size_t i = 0; i < tokens.size() >> 1; ++i) {
+	    CFStringPtr key =
+		afutil::W2CF(strutil::m2w(tokens[2 * i], u8codec));
+	    CFStringPtr value =
+		afutil::W2CF(strutil::m2w(tokens[2 * i + 1], u8codec));
+	    CFDictionarySetValue(dictref, key.get(), value.get());
+	}
+	dict->swap(dictptr);
+	return true;
     }
 }
 
@@ -249,7 +338,7 @@ namespace callback {
 }
 
 static
-void setup_audiofile(AudioFileX &iaf, AudioFileX &oaf)
+void setup_audiofile(FILE *ifp, AudioFileX &iaf, AudioFileX &oaf)
 {
     AudioStreamBasicDescription asbd;
     iaf.getDataFormat(&asbd);
@@ -276,12 +365,29 @@ void setup_audiofile(AudioFileX &iaf, AudioFileX &oaf)
 	if (!e.isNotSupportedError())
 	    throw;
     }
-    try {
-	CFDictionaryPtr dict = iaf.getInfoDictionary();
-	oaf.setInfoDictionary(dict.get());
-    } catch (const CoreAudioException &e) {
-	if (!e.isNotSupportedError())
-	    throw;
+    CFDictionaryPtr dict;
+    if (iaf.getFileFormat() == kAudioFileCAFType)
+	/*
+	 * CoreAudio seems to *save* tags into CAF, 
+	 * but not to *load* it from CAF (why?).
+	 * Anyway, therefore we try to manually load it.
+	 */
+	caf::get_info_dictionary(ifp, &dict);
+    else {
+	try {
+	    dict = iaf.getInfoDictionary();
+	} catch (const CoreAudioException &e) {
+	    if (!e.isNotSupportedError())
+		throw;
+	}
+    }
+    if (dict.get()) {
+	try {
+	    oaf.setInfoDictionary(dict.get());
+	} catch (const CoreAudioException &e) {
+	    if (!e.isNotSupportedError())
+		throw;
+	}
     }
 
     try {
@@ -358,18 +464,18 @@ void process(const std::wstring &ifilename, const std::wstring &ofilename,
 	throw std::runtime_error(ss.str());
     }
     AudioFileX oaf(oafid, true);
-    setup_audiofile(iaf, oaf);
+    setup_audiofile(ifp.get(), iaf, oaf);
 
     uint32_t packet_size = iaf.getPacketSizeUpperBound();
     size_t buffer_size = packet_size;
     uint32_t packets_at_once = 1;
     while (packet_size * packets_at_once < 4096) {
-	packets_at_once <<= 2;
-	buffer_size <<= 2;
+	packets_at_once <<= 1;
+	buffer_size <<= 1;
     }
     std::vector<uint8_t> buffer(buffer_size);
     uint64_t packet_count = iaf.getAudioDataPacketCount();
-    AudioFilePacketTableInfo packet_table;
+    AudioFilePacketTableInfo packet_table = { 0 };
     /*
      *	AudioFile properly *writes* PacketTableInfo to M4A (as iTunSMPB).
      *	However, it doesn't *read* it from M4A iTunSMPB.
