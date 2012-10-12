@@ -68,6 +68,7 @@ typedef struct {
 CFTypeID CFDictionaryGetTypeID(void);
 CFDictionaryRef CFDictionaryCreate(CFAllocatorRef allocator, const void **keys, const void **values, CFIndex numValues, const CFDictionaryKeyCallBacks *keyCallBacks, const CFDictionaryValueCallBacks *valueCallBacks);
 CFMutableDictionaryRef CFDictionaryCreateMutable(CFAllocatorRef allocator, CFIndex capacity, const CFDictionaryKeyCallBacks *keyCallBacks, const CFDictionaryValueCallBacks *valueCallBacks);
+CFMutableDictionaryRef CFDictionaryCreateMutableCopy(CFAllocatorRef allocator, CFIndex capacity, CFDictionaryRef theDict);
 void CFDictionarySetValue(CFMutableDictionaryRef theDict, const void *key, const void *value);
 CFIndex CFDictionaryGetCount(CFDictionaryRef theDict);
 const void *CFDictionaryGetValue(CFDictionaryRef theDict, const void *key);

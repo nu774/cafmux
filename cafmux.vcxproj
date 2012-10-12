@@ -80,6 +80,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AudioFileX.cpp" />
+    <ClCompile Include="bitstream.cpp" />
+    <ClCompile Include="id3.cpp" />
+    <ClCompile Include="mpa.cpp" />
     <ClCompile Include="remux.cpp" />
     <ClCompile Include="strutil.cpp" />
     <ClCompile Include="utf8_codecvt_facet.cpp" />

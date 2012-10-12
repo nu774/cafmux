@@ -5,89 +5,50 @@
 #include <windows.h>
 #include <shlwapi.h>
 #include <delayimp.h>
+#include <crtdbg.h>
 #include "utf8_codecvt_facet.hpp"
 #include "strutil.h"
+#include "util.h"
 #include "AudioFileX.h"
+#include "mpa.h"
+#include "id3.h"
 #include "version.h"
 
-#define fseeko _fseeki64
+namespace mpa {
+    void generate_vbr_header(const uint8_t *reference,
+			     const uint64_t *packet_pos,
+			     size_t packet_count,
+			     uint64_t total_bytes,
+			     std::vector<uint8_t> *result)
+    {
+	MPAHeader header(reference);
+	header.m_bitrate = 5; /* 64 for MPEG 1 Layer III */
+	header.m_padding = 0;
+	std::vector<uint8_t> buf(header.frame_size());
+	header.get_bytes(&buf[0]);
+	size_t pos = 4 + header.side_information_size();
+	std::memcpy(&buf[pos], "Xing", 4), pos += 4;
+	/* FRAMES_FLAG | BYTES_FLAG | TOC_FLAG */
+	std::memcpy(&buf[pos], "\x00\x00\x00\x07", 4), pos += 4;
+	uint32_t n = util::h2big32(packet_count);
+	std::memcpy(&buf[pos], &n, 4), pos += 4;
+	n = util::h2big32(total_bytes + header.frame_size());
+	std::memcpy(&buf[pos], &n, 4), pos += 4;
 
-namespace util {
-    inline uint32_t b2host32(uint32_t n)
-    {
-	return _byteswap_ulong(n);
-    }
+	unsigned percent = 0;
+	uint64_t toc[100];
+	for (size_t i = 0; i < packet_count; ++i)
+	    while (i * 100 / packet_count >= percent)
+		toc[percent++] = packet_pos[i];
 
-    inline uint64_t b2host64(uint64_t n)
-    {
-	return _byteswap_uint64(n);
-    }
-
-    void throw_crt_error(const std::string &message)
-    {
-	std::stringstream ss;
-	ss << message << ": " << std::strerror(errno);
-	throw std::runtime_error(ss.str());
-    }
-
-    void throw_crt_error(const std::wstring &message)
-    {
-	std::stringstream ss;
-	utf8_codecvt_facet u8;
-	ss << strutil::w2m(message, u8) << ": " << std::strerror(errno);
-	throw std::runtime_error(ss.str());
-    }
-    void throw_win32_error(const std::wstring &msg, DWORD code)
-    {
-	LPWSTR pszMsg;
-	FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
-		       FORMAT_MESSAGE_FROM_SYSTEM,
-		       0,
-		       code,
-		       MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-		       (LPWSTR)&pszMsg,
-		       0,
-		       0);
-	std::wstringstream ss;
-	if (pszMsg) {
-	    strutil::squeeze(pszMsg, L"\r\n");
-	    ss << msg << L": " << pszMsg;
-	    LocalFree(pszMsg);
-	}
-	else if (code < 0xfe00)
-	    ss << code << L": " << msg;
-	else
-	    ss << std::hex << code << L": " << msg;
-	throw std::runtime_error(strutil::w2m(ss.str(), utf8_codecvt_facet()));
-    }
-    void throw_win32_error(const std::string &msg, DWORD code)
-    {
-	throw_win32_error(strutil::m2w(msg, utf8_codecvt_facet()), code);
-    }
-    std::shared_ptr<FILE> open_file(const std::wstring &fname,
-				    const wchar_t *mode)
-    {
-	FILE * fp = _wfopen(fname.c_str(), mode);
-	if (!fp) throw_crt_error(fname);
-	return std::shared_ptr<FILE>(fp, std::fclose);
-    }
-    std::wstring GetModuleFileNameX(HMODULE module)
-    {
-	std::vector<wchar_t> buffer(32);
-	DWORD cclen = GetModuleFileNameW(module, &buffer[0],
-					 static_cast<DWORD>(buffer.size()));
-	while (cclen >= buffer.size() - 1) {
-	    buffer.resize(buffer.size() * 2);
-	    cclen = GetModuleFileNameW(module, &buffer[0],
-				       static_cast<DWORD>(buffer.size()));
-	}
-	return std::wstring(&buffer[0], &buffer[cclen]);
-    }
-    std::wstring get_module_directory()
-    {
-	std::wstring selfpath = GetModuleFileNameX(0);
-	const wchar_t *fpos = PathFindFileNameW(selfpath.c_str());
-	return selfpath.substr(0, fpos - selfpath.c_str());
+	size_t off = header.frame_size();
+	for (size_t i = 0; i < 100; ++i)
+	    buf[pos++] = static_cast<uint8_t>((toc[i] + off) * 255.0 /
+					      (total_bytes + off) + 0.5);
+	pos += 4; /* we don't write vbr quality scale */
+	std::sprintf(reinterpret_cast<char*>(&buf[pos]),
+		     "cafmux %s", cafmux_version);
+	result->swap(buf);
     }
 }
 
@@ -338,6 +299,26 @@ namespace callback {
 }
 
 static
+void get_tags(FILE *ifp, AudioFile &iaf, CFDictionaryPtr *dict)
+{
+    if (iaf.getFileFormat() == kAudioFileCAFType)
+	/*
+	 * CoreAudio seems to *save* tags into CAF, 
+	 * but not to *load* it from CAF (why?).
+	 * Anyway, therefore we try to manually load it.
+	 */
+	caf::get_info_dictionary(ifp, dict);
+    else {
+	try {
+	    dict->swap(iaf.getInfoDictionary());
+	} catch (const CoreAudioException &e) {
+	    if (!e.isNotSupportedError())
+		throw;
+	}
+    }
+}
+
+static
 void setup_audiofile(FILE *ifp, AudioFileX &iaf, AudioFileX &oaf)
 {
     AudioStreamBasicDescription asbd;
@@ -366,21 +347,7 @@ void setup_audiofile(FILE *ifp, AudioFileX &iaf, AudioFileX &oaf)
 	    throw;
     }
     CFDictionaryPtr dict;
-    if (iaf.getFileFormat() == kAudioFileCAFType)
-	/*
-	 * CoreAudio seems to *save* tags into CAF, 
-	 * but not to *load* it from CAF (why?).
-	 * Anyway, therefore we try to manually load it.
-	 */
-	caf::get_info_dictionary(ifp, &dict);
-    else {
-	try {
-	    dict = iaf.getInfoDictionary();
-	} catch (const CoreAudioException &e) {
-	    if (!e.isNotSupportedError())
-		throw;
-	}
-    }
+    get_tags(ifp, iaf, &dict);
     if (dict.get()) {
 	try {
 	    oaf.setInfoDictionary(dict.get());
@@ -395,6 +362,38 @@ void setup_audiofile(FILE *ifp, AudioFileX &iaf, AudioFileX &oaf)
     } catch (const CoreAudioException &e) {
 	if (!e.isNotSupportedError())
 	    throw;
+    }
+}
+
+/*
+ * AudioFile properly *writes* PacketTableInfo to M4A (as iTunSMPB).
+ * However, it doesn't *read* it from M4A iTunSMPB.
+ */
+static
+void get_packet_table_info(AudioFileX &af, FILE *fp,
+			   AudioFilePacketTableInfo *info)
+{
+    try {
+	af.getPacketTableInfo(info);
+    } catch (const CoreAudioException &e) {
+	if (!e.isNotSupportedError())
+	    throw;
+    }
+    uint32_t iformat = af.getFileFormat();
+    AudioFilePacketTableInfo itinfo = { 0 };
+    if (mp4::test_if_mp4(fp))
+	mp4::get_priming_info(fp, &itinfo);
+
+    if (itinfo.mPrimingFrames || itinfo.mRemainderFrames) {
+	AudioStreamBasicDescription asbd;
+	af.getDataFormat(&asbd);
+	uint64_t packet_count = af.getAudioDataPacketCount();
+
+	uint64_t total = itinfo.mNumberValidFrames +
+	    itinfo.mPrimingFrames + itinfo.mRemainderFrames;
+	/* sanity check */
+	if (total == asbd.mFramesPerPacket * packet_count)
+	    *info = itinfo;
     }
 }
 
@@ -416,6 +415,12 @@ void show_format(const std::wstring &ifilename)
     AudioStreamBasicDescription asbd;
     iaf.getDataFormat(&asbd);
     std::wprintf(L"%s\n", afutil::getASBDFormatName(&asbd).c_str());
+}
+
+inline bool is_mpeg(uint32_t format)
+{
+    return format == kAudioFileMP1Type || format == kAudioFileMP2Type ||
+	format == kAudioFileMP3Type;
 }
 
 static
@@ -464,7 +469,17 @@ void process(const std::wstring &ifilename, const std::wstring &ofilename,
 	throw std::runtime_error(ss.str());
     }
     AudioFileX oaf(oafid, true);
-    setup_audiofile(ifp.get(), iaf, oaf);
+    if (is_mpeg(oformat))
+    {
+	/*
+	 * We don't use AudioFile and directly write instead.
+	 */
+	oaf.close();
+	fseeko(ofp.get(), 0, SEEK_SET);
+	_chsize_s(_fileno(ofp.get()), 0);
+    }
+    else
+	setup_audiofile(ifp.get(), iaf, oaf);
 
     uint32_t packet_size = iaf.getPacketSizeUpperBound();
     size_t buffer_size = packet_size;
@@ -473,44 +488,26 @@ void process(const std::wstring &ifilename, const std::wstring &ofilename,
 	packets_at_once <<= 1;
 	buffer_size <<= 1;
     }
-    std::vector<uint8_t> buffer(buffer_size);
     uint64_t packet_count = iaf.getAudioDataPacketCount();
-    AudioFilePacketTableInfo packet_table = { 0 };
-    /*
-     *	AudioFile properly *writes* PacketTableInfo to M4A (as iTunSMPB).
-     *	However, it doesn't *read* it from M4A iTunSMPB.
-     */
-    {
-	try {
-	    iaf.getPacketTableInfo(&packet_table);
-	} catch (const CoreAudioException &e) {
-	    if (!e.isNotSupportedError())
-		throw;
-	}
-	uint32_t iformat = iaf.getFileFormat();
-	AudioFilePacketTableInfo itinfo = { 0 };
-	if (mp4::test_if_mp4(ifp.get()))
-	    mp4::get_priming_info(ifp.get(), &itinfo);
 
-	if (itinfo.mPrimingFrames || itinfo.mRemainderFrames) {
-	    uint64_t total = itinfo.mNumberValidFrames +
-		itinfo.mPrimingFrames + itinfo.mRemainderFrames;
-	    /* sanity check */
-	    if (total == asbd.mFramesPerPacket * packet_count)
-		packet_table = itinfo;
-	}
-    }
+    std::vector<uint8_t> buffer(buffer_size);
+    AudioFilePacketTableInfo packet_table = { 0 };
+    get_packet_table_info(iaf, ifp.get(), &packet_table);
 
     int64_t pos = 0;
     int64_t bytes_written = 0;
     std::vector<AudioStreamPacketDescription> aspd(packets_at_once);
+    std::vector<uint64_t> packet_pos;
+    UInt32 prev_nbytes = 0;
+    bool cbr = true;
     try {
 	while (pos < packet_count) {
 	    UInt32 nbytes = buffer_size;
 	    UInt32 npackets = packets_at_once;
 	    CHECKCA(AudioFileReadPacketData(iafid, false, &nbytes, &aspd[0],
 					    pos, &npackets, &buffer[0]));
-	    if (!npackets) break;
+	    if (!npackets)
+		break;
 	    if (asbd.mFormatID == FOURCC('a','l','a','c') &&
 		oformat != kAudioFileCAFType) {
 		/*
@@ -528,34 +525,84 @@ void process(const std::wstring &ifilename, const std::wstring &ofilename,
 	     * therefore we use AudioFileWritePackets() only when
 	     * packet information is in use for the format.
 	     */
-	    if (aspd[0].mDataByteSize)
+	    if (is_mpeg(oformat))
+		std::fwrite(&buffer[0], 1, nbytes, ofp.get());
+	    else if (aspd[0].mDataByteSize)
 		CHECKCA(AudioFileWritePackets(oafid, false, nbytes, &aspd[0],
 					      pos, &npackets, &buffer[0]));
 	    else
 		CHECKCA(AudioFileWriteBytes(oafid, false, bytes_written,
 					    &nbytes, &buffer[0]));
+
 	    pos += npackets;
-	    bytes_written += nbytes;
+	    if (aspd[0].mDataByteSize) {
+		for (size_t i = 0; i < npackets; ++i) {
+		    packet_pos.push_back(bytes_written);
+		    bytes_written += aspd[i].mDataByteSize;
+		}
+	    } else
+		bytes_written += nbytes;
+	    if (prev_nbytes && std::abs(int(nbytes) - int(prev_nbytes)) > 1)
+		cbr = false;
+	    prev_nbytes = nbytes;
 	    double percent = 100.0 * pos / packet_count;
 	    std::fwprintf(stderr, L"\r%.0f%% processed", percent);
 	    std::fflush(stderr);
-	}
-	if (asbd.mFormatID == FOURCC('a','l','a','c') &&
-	    oformat != kAudioFileCAFType)
-	    std::memset(&packet_table, 0, sizeof(packet_table));
-	if (packet_table.mPrimingFrames || packet_table.mRemainderFrames) {
-	    try {
-		oaf.setPacketTableInfo(&packet_table);
-	    } catch (const CoreAudioException &e) {
-		if (!e.isNotSupportedError())
-		    throw;
-	    }
 	}
     } catch (...) {
 	std::putwc('\n', stderr);
 	throw;
     }
-    std::fwprintf(stderr, L"...done\n");
+    std::putwc('\n', stderr);
+    packet_count = pos;
+    if (is_mpeg(oformat)) {
+	std::vector<uint8_t> xing_header;
+	if (!cbr) {
+	    mpa::generate_vbr_header(&buffer[0], &packet_pos[0],
+				     packet_pos.size(), bytes_written,
+				     &xing_header);
+	}
+	std::vector<uint8_t> id3tag;
+	CFDictionaryPtr info_dict;
+	get_tags(ifp.get(), iaf, &info_dict);
+	{
+	    uint64_t prefetch_pos = 0;
+	    if (packet_pos.size() > 7) {
+		prefetch_pos = xing_header.size() +
+		    packet_pos[packet_pos.size() - 8];
+	    }
+	    if (packet_table.mPrimingFrames ||
+		packet_table.mRemainderFrames ||
+		info_dict.get())
+		id3::build_id3tag(info_dict.get(), &packet_table,
+				  prefetch_pos, &id3tag);
+	}
+	if (id3tag.size() || xing_header.size()) {
+	    util::shift_file_content(ofp.get(),
+				     id3tag.size() + xing_header.size());
+	    fseeko(ofp.get(), 0, SEEK_SET);
+	    if (id3tag.size())
+		std::fwrite(&id3tag[0], 1, id3tag.size(), ofp.get());
+	    if (xing_header.size())
+		std::fwrite(&xing_header[0], 1, xing_header.size(), ofp.get());
+	}
+    }
+    if (!is_mpeg(oformat) && (asbd.mFormatID != FOURCC('a','l','a','c') ||
+	oformat == kAudioFileCAFType)) {
+	if (packet_table.mPrimingFrames || packet_table.mRemainderFrames) {
+	    if (!packet_table.mNumberValidFrames) {
+		/* take care of MP3 iTunSMPB */
+		packet_table.mNumberValidFrames =
+		    packet_count * asbd.mFramesPerPacket -
+		    packet_table.mPrimingFrames -
+		    packet_table.mRemainderFrames;
+	    }
+	    try {
+		oaf.setPacketTableInfo(&packet_table);
+	    } catch (...) {
+	    }
+	}
+    }
     std::fflush(stderr);
 }
 
@@ -644,6 +691,9 @@ L"       cafmux INFILE OUTFILE (remux INFILE to OUTFILE)\n"
 
 int wmain(int argc, wchar_t **argv)
 {
+#ifdef _DEBUG
+    _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF|_CRTDBG_CHECK_ALWAYS_DF);
+#endif
     _setmode(1, _O_U8TEXT);
     _setmode(2, _O_U8TEXT);
 

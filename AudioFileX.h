@@ -7,6 +7,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <stdint.h>
+#define NOMINMAX
+#include <windows.h>
+#include <shlwapi.h>
 #include "CoreAudio/AudioFile.h"
 #include "CoreAudio/AudioFormat.h"
 #include "strutil.h"
@@ -47,28 +50,8 @@ public:
     } while (0)
 
 namespace afutil {
-    std::string make_coreaudio_error(long code, const char *s)
-    {
-	std::stringstream ss;
-	if (code == FOURCC('t','y','p','?'))
-	    return "Unsupported file type";
-	else if (code == FOURCC('f','m','t','?'))
-	    return "Data format is not supported for this file type";
-	int i;
-	for (i = 0; i < 4; ++i)
-	    if (!isprint(code & 0xff))
-		break;
-	if (i == 4)
-	    ss << s << ": "
-	       << static_cast<char>(code >> 24)
-	       << static_cast<char>((code >> 16) & 0xff)
-	       << static_cast<char>((code >> 8) & 0xff)
-	       << static_cast<char>(code & 0xff);
-	else
-	    ss << s << ": " << code;
-	return ss.str();
-    }
-    std::wstring CF2W(CFStringRef str)
+    std::string make_coreaudio_error(long code, const char *s);
+    inline std::wstring CF2W(CFStringRef str)
     {
 	CFIndex length = CFStringGetLength(str);
 	if (!length) return L"";
@@ -83,7 +66,7 @@ namespace afutil {
 		reinterpret_cast<const UniChar*>(s.c_str()), s.size());
 	return CFStringPtr(sref, CFRelease);
     }
-    uint32_t getTypesForExtension(const wchar_t *fname)
+    inline uint32_t getTypesForExtension(const wchar_t *fname)
     {
 	std::wstring ext = strutil::wslower(PathFindExtensionW(fname));
 	CFStringPtr cfsp = W2CF(ext.substr(1));
@@ -95,7 +78,7 @@ namespace afutil {
 				       &cfsr, &size, &type));
 	return type;
     }
-    void getReadableTypes(std::vector<uint32_t> *result)
+    inline void getReadableTypes(std::vector<uint32_t> *result)
     {
 	UInt32 size;
 	CHECKCA(AudioFileGetGlobalInfoSize(kAudioFileGlobalInfo_ReadableTypes,
@@ -105,7 +88,7 @@ namespace afutil {
 				       0, 0, &size, &vec[0]));
 	result->swap(vec);
     }
-    void getWritableTypes(std::vector<uint32_t> *result)
+    inline void getWritableTypes(std::vector<uint32_t> *result)
     {
 	UInt32 size;
 	CHECKCA(AudioFileGetGlobalInfoSize(kAudioFileGlobalInfo_WritableTypes,
@@ -115,7 +98,7 @@ namespace afutil {
 				       0, 0, &size, &vec[0]));
 	result->swap(vec);
     }
-    std::wstring getFileTypeName(uint32_t type)
+    inline std::wstring getFileTypeName(uint32_t type)
     {
 	CFStringRef name;
 	UInt32 size = sizeof(name);
@@ -124,7 +107,8 @@ namespace afutil {
 	CFStringPtr _(name, CFRelease);
 	return CF2W(name);
     }
-    void getExtensionsForType(uint32_t type, std::vector<std::wstring> *vec)
+    inline void getExtensionsForType(uint32_t type,
+				     std::vector<std::wstring> *vec)
     {
 	CFArrayRef aref;
 	UInt32 size = sizeof(aref);
@@ -140,7 +124,8 @@ namespace afutil {
 	}
 	vec->swap(result);
     }
-    std::wstring getASBDFormatName(const AudioStreamBasicDescription *asbd)
+    inline std::wstring
+	getASBDFormatName(const AudioStreamBasicDescription *asbd)
     {
 	CFStringRef s;
 	UInt32 size = sizeof(s);
@@ -168,6 +153,7 @@ public:
 	m_file.reset(file, takeOwn ? AudioFileClose : F::dispose);
     }
     operator AudioFileID() { return m_file.get(); }
+    void close() { m_file.reset(); }
 
     // property accessors
     uint32_t getFileFormat()
