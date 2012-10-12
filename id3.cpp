@@ -20,7 +20,6 @@ namespace id3 {
 	{ kAFInfoDictionary_Genre,               "TCON" },
 	{ kAFInfoDictionary_Title,               "TIT2" },
 	{ kAFInfoDictionary_RecordedDate,        "TRDA" },
-	{ kAFInfoDictionary_Comments,            "COMM" },
 	{ kAFInfoDictionary_Copyright,           "TCOP" },
 	{ kAFInfoDictionary_EncodingApplication, "TSSE" },
 	{ kAFInfoDictionary_ISRC,                "TSRC" },
@@ -144,7 +143,7 @@ namespace id3 {
 	    build_comment_frame("eng", L"iTunSMPB", ws.c_str(), &frame);
 	    std::copy(frame.begin(), frame.end(), std::back_inserter(vec));
 	}
-	uint32_t size = 256;
+	uint32_t size = 512;
 	while (size < vec.size())
 	    size <<= 1;
 	vec.resize(size);

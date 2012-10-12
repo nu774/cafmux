@@ -258,14 +258,15 @@ public:
 				     &size, &len));
 	return len;
     }
-    CFDictionaryPtr getInfoDictionary()
+    void getInfoDictionary(CFDictionaryPtr *dict)
     {
-	CFDictionaryRef dict;
+	CFDictionaryRef dictref;
 	UInt32 size = sizeof dict;
 	CHECKCA(AudioFileGetProperty(m_file.get(),
 		    kAudioFilePropertyInfoDictionary,
-		    &size, &dict));
-	return CFDictionaryPtr(dict, CFRelease);
+		    &size, &dictref));
+	CFDictionaryPtr newdic(dictref, CFRelease);
+	dict->swap(newdic);
     }
     void setInfoDictionary(CFDictionaryRef dict)
     {
