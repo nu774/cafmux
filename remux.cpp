@@ -299,7 +299,8 @@ public:
 					       callback::size, 0, 0, &iafid));
 	} catch (const CoreAudioException &e) {
 	    std::stringstream ss;
-	    ss << strutil::w2m(ifilename) << ": " << e.what();
+	    ss << strutil::w2m(ifilename, utf8_codecvt_facet())
+	       << ": " << e.what();
 	    throw std::runtime_error(ss.str());
 	}
 	m_iaf.attach(iafid, true);
@@ -341,7 +342,8 @@ public:
 						     0, &oafid));
 	} catch (const CoreAudioException &e) {
 	    std::stringstream ss;
-	    ss << strutil::w2m(ofilename) << ": " << e.what();
+	    ss << strutil::w2m(ofilename, utf8_codecvt_facet())
+	       << ": " << e.what();
 	    if (e.code() == FOURCC('f','m','t','?')) {
 		ss << "\n" << "Data format: ";
 		ss << strutil::w2m(afutil::getASBDFormatName(&m_asbd),
