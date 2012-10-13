@@ -21,7 +21,8 @@ Notice
    Also, You cannot write iTunSMPB(important for gapless playback)
    into MP4.
    Therefore, you should almost always use M4A for writing (instead of MP4).
-4) CoreAudio says AC3 is available (thus printed in -p), but actually is not.
+4) CoreAudio says AC3 and AMR are available (thus printed in -p),
+   but actually is not.
 
 How to build
 ------------
