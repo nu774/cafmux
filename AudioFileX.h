@@ -135,6 +135,16 @@ namespace afutil {
 	CFStringPtr _(s, CFRelease);
 	return CF2W(s);
     }
+    inline void id3TagToDictinary(const void *data, size_t size,
+				  CFDictionaryPtr *dict)
+    {
+	UInt32 k = kAudioFormatProperty_ID3TagToDictionary;
+	CFDictionaryRef dref;
+	UInt32 osize = sizeof dref;
+	CHECKCA(AudioFormatGetProperty(k, size, data, &osize, &dref));
+	CFDictionaryPtr dp(dref, CFRelease);
+	dict->swap(dp);
+    }
 }
 
 class AudioFileX {
@@ -243,10 +253,9 @@ public:
     }
     void setReserveDuration(double duration)
     {
-	UInt32 size = sizeof(duration);
 	CHECKCA(AudioFileSetProperty(m_file.get(),
 				     kAudioFilePropertyReserveDuration,
-				     size,
+				     sizeof(duration),
 				     &duration));
     }
     uint32_t getPacketSizeUpperBound()
@@ -270,10 +279,23 @@ public:
     }
     void setInfoDictionary(CFDictionaryRef dict)
     {
-	UInt32 size = sizeof(dict);
 	CHECKCA(AudioFileSetProperty(m_file.get(),
 				     kAudioFilePropertyInfoDictionary,
-				     size, &dict));
+				     sizeof(dict), &dict));
+    }
+    void getUserData(uint32_t fcc, uint32_t index, std::vector<uint8_t> *res)
+    {
+	UInt32 size;
+	CHECKCA(AudioFileGetUserDataSize(m_file.get(), fcc, index, &size));
+	std::vector<uint8_t> vec(size);
+	CHECKCA(AudioFileGetUserData(m_file.get(), fcc, index, &size,
+				     &vec[0]));
+	res->swap(vec);
+    }
+    void setUserData(uint32_t fcc, uint32_t index, const void *data,
+		     size_t size)
+    {
+	CHECKCA(AudioFileSetUserData(m_file.get(), fcc, index, size, data));
     }
 };
 

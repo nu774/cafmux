@@ -109,6 +109,18 @@ namespace util {
 	    std::fwrite(buf, 1, end - begin, fp);
 	}
     }
+    /*
+     * Loads CoreFoundation.dll constants.
+     * Since DATA cannot be delayimp-ed, we have to manually
+     * load it using .
+     */
+    inline void *load_cf_constant(const char *name)
+    {
+	HMODULE cf = GetModuleHandleA("CoreFoundation.dll");
+	if (!cf)
+	    util::throw_win32_error("CoreFouncation.dll", GetLastError());
+	return GetProcAddress(cf, name);
+    }
 }
 
 #endif

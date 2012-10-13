@@ -173,18 +173,6 @@ namespace caf {
 	std::fsetpos(fp, &pos);
 	return found;
     }
-    /*
-     * Loads CoreFoundation.dll constants.
-     * Since DATA cannot be delayimp-ed, we have to manually
-     * load it using .
-     */
-    void *load_cf_constant(const char *name)
-    {
-	HMODULE cf = GetModuleHandleA("CoreFoundation.dll");
-	if (!cf)
-	    util::throw_win32_error("CoreFouncation.dll", GetLastError());
-	return GetProcAddress(cf, name);
-    }
     bool get_info_dictionary(FILE *fp, CFDictionaryPtr *dict)
     {
 	std::vector<char> info;
@@ -203,10 +191,10 @@ namespace caf {
 	// get some constants manually
 	const CFDictionaryKeyCallBacks *kcb
 	    = static_cast<const CFDictionaryKeyCallBacks *>(
-		load_cf_constant("kCFTypeDictionaryKeyCallBacks"));
+		util::load_cf_constant("kCFTypeDictionaryKeyCallBacks"));
 	const CFDictionaryValueCallBacks *vcb
 	    = static_cast<const CFDictionaryValueCallBacks *>(
-		load_cf_constant("kCFTypeDictionaryValueCallBacks"));
+		util::load_cf_constant("kCFTypeDictionaryValueCallBacks"));
 
 	CFMutableDictionaryRef dictref =
 	    CFDictionaryCreateMutable(0, tokens.size() >> 1, kcb, vcb);
@@ -327,6 +315,7 @@ public:
 	    }
 	    m_buffer.resize(buffer_size);
 	}
+	std::memset(&m_packet_info, 0, sizeof m_packet_info);
 	getPacketTableInfo(&m_packet_info);
 	m_aspd.resize(m_packet_at_once);
 
@@ -337,6 +326,9 @@ public:
 	if (oformat == kAudioFileAIFFType &&
 	    m_asbd.mFormatID != FOURCC('l','p','c','m'))
 	    oformat = kAudioFileAIFCType;
+	else if (oformat == kAudioFileAIFCType &&
+	    m_asbd.mFormatID == FOURCC('l','p','c','m'))
+	    oformat = kAudioFileAIFFType;
 
 	AudioFileID oafid;
 	try {
@@ -490,11 +482,19 @@ private:
 	CFDictionaryPtr dict;
 	getTags(&dict);
 	if (dict.get()) {
-	    try {
-		m_oaf.setInfoDictionary(dict.get());
-	    } catch (const CoreAudioException &e) {
-		if (!e.isNotSupportedError())
-		    throw;
+	    if (m_oformat == kAudioFileAIFFType ||
+		m_oformat == kAudioFileAIFCType) {
+		std::vector<uint8_t> id3;
+		id3::build_id3tag(dict.get(), 0, 0, &id3);
+		m_oaf.setUserData(FOURCC('I','D','3',' '), 0, &id3[0],
+				  id3.size());
+	    } else {
+		try {
+		    m_oaf.setInfoDictionary(dict.get());
+		} catch (const CoreAudioException &e) {
+		    if (!e.isNotSupportedError())
+			throw;
+		}
 	    }
 	}
 
@@ -536,14 +536,24 @@ private:
     }
     void getTags(CFDictionaryPtr *dict)
     {
-	if (m_iaf.getFileFormat() == kAudioFileCAFType)
+	uint32_t format = m_iaf.getFileFormat();
+	if (format == kAudioFileCAFType)
 	    /*
 	     * CoreAudio seems to *save* tags into CAF, 
 	     * but not to *load* it from CAF (why?).
 	     * Anyway, therefore we try to manually load it.
 	     */
 	    caf::get_info_dictionary(m_ifp.get(), dict);
-	else {
+	else if (format == kAudioFileAIFFType || format == kAudioFileAIFCType) {
+	    std::vector<uint8_t> id3;
+	    try {
+		m_iaf.getUserData(FOURCC('I','D','3',' '), 0, &id3);
+		id3::convert_to_caf_dictionary(&id3[0], id3.size(), dict);
+	    } catch (const CoreAudioException &e) {
+		if (!e.isNotSupportedError())
+		    throw;
+	    }
+	} else {
 	    try {
 		m_iaf.getInfoDictionary(dict);
 	    } catch (const CoreAudioException &e) {

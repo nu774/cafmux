@@ -1,3 +1,5 @@
+#define NOMINMAX
+#include <windows.h>
 #include "id3.h"
 #include "utf8_codecvt_facet.hpp"
 #include "strutil.h"
@@ -6,7 +8,7 @@
 
 namespace id3 {
     struct id3info {
-	const char *AFKey;
+	const char *cafKey;
 	const char *id3Key;
     } id3keymap[] = {
 	{ kAFInfoDictionary_Artist,              "TPE1" },
@@ -26,11 +28,19 @@ namespace id3 {
 	{ kAFInfoDictionary_SubTitle,            "TIT3" },
 	{ 0,                                     0      }
     };
-    const char *get_id3name(const char *afkey)
+    const char *get_cafname(const char *id3name)
     {
 	const struct id3info *pmap = id3keymap;
-	for (; pmap->AFKey; pmap++)
-	    if (!std::memcmp(afkey, pmap->AFKey, 4))
+	for (; pmap->cafKey; pmap++)
+	    if (!std::memcmp(id3name, pmap->id3Key, 4))
+		return pmap->cafKey;
+	return 0;
+    }
+    const char *get_id3name(const char *cafkey)
+    {
+	const struct id3info *pmap = id3keymap;
+	for (; pmap->cafKey; pmap++)
+	    if (!std::memcmp(cafkey, pmap->cafKey, 4))
 		return pmap->id3Key;
 	return 0;
     }
@@ -127,7 +137,8 @@ namespace id3 {
 	};
 	if (dict)
 	    CFDictionaryApplyFunction(dict, &dict_callback::f, &vec);
-	if (packet_info->mPrimingFrames || packet_info->mRemainderFrames) {
+	if (packet_info &&
+	    (packet_info->mPrimingFrames || packet_info->mRemainderFrames)) {
 	    const char *tmpl =
 		" 00000000 %08X %08X %016llX 00000000 %08X 00000000 00000000"
 		" 00000000 00000000 00000000 00000000";
@@ -149,5 +160,43 @@ namespace id3 {
 	vec.resize(size);
 	get_sync_value(size - 10, &vec[6]);
 	result->swap(vec);
+    }
+    void convert_to_caf_dictionary(const void *id3, size_t size,
+				   CFDictionaryPtr *odict)
+    {
+	CFDictionaryPtr idict;
+	afutil::id3TagToDictinary(id3, size, &idict);
+	// get some constants manually
+	const CFDictionaryKeyCallBacks *kcb
+	    = static_cast<const CFDictionaryKeyCallBacks *>(
+		util::load_cf_constant("kCFTypeDictionaryKeyCallBacks"));
+	const CFDictionaryValueCallBacks *vcb
+	    = static_cast<const CFDictionaryValueCallBacks *>(
+		util::load_cf_constant("kCFTypeDictionaryValueCallBacks"));
+
+	CFIndex count = CFDictionaryGetCount(idict.get());
+	CFMutableDictionaryRef dictref =
+	    CFDictionaryCreateMutable(0, count, kcb, vcb);
+	CFDictionaryPtr dictptr(dictref, CFRelease);
+	struct dict_callback {
+	    static void f(const void *k, const void *v, void *c)
+	    {
+		utf8_codecvt_facet utf8;
+
+		CFMutableDictionaryRef dp =
+		    static_cast<CFMutableDictionaryRef>(c);
+		std::wstring wkey =
+		    afutil::CF2W(static_cast<CFStringRef>(k));
+		std::string skey = strutil::w2m(wkey, utf8);
+		const char *cafname = get_cafname(skey.c_str());
+		if (cafname) {
+		    std::wstring wcafname = strutil::m2w(cafname, utf8);
+		    CFStringPtr cafkey = afutil::W2CF(wcafname);
+		    CFDictionarySetValue(dp, cafkey.get(), v);
+		}
+	    }
+	};
+	CFDictionaryApplyFunction(idict.get(), &dict_callback::f, dictref);
+	odict->swap(dictptr);
     }
 }
