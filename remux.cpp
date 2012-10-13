@@ -305,7 +305,7 @@ public:
 	}
 	m_iaf.attach(iafid, true);
 	m_iaf.getDataFormat(&m_asbd);
-	if (is_mpeg) {
+	if (is_mpeg(oformat)) {
 	    if (m_asbd.mFormatID != FOURCC('.','m','p','1') &&
 		m_asbd.mFormatID != FOURCC('.','m','p','2') &&
 		m_asbd.mFormatID != FOURCC('.','m','p','3'))
