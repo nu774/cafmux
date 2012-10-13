@@ -305,6 +305,20 @@ public:
 	}
 	m_iaf.attach(iafid, true);
 	m_iaf.getDataFormat(&m_asbd);
+	if (is_mpeg) {
+	    if (m_asbd.mFormatID != FOURCC('.','m','p','1') &&
+		m_asbd.mFormatID != FOURCC('.','m','p','2') &&
+		m_asbd.mFormatID != FOURCC('.','m','p','3'))
+	    {
+		std::stringstream ss;
+		ss << strutil::w2m(ofilename, utf8_codecvt_facet())
+		   << ": Data format is not supported for this file type";
+		ss << "\n" << "Data format: ";
+		ss << strutil::w2m(afutil::getASBDFormatName(&m_asbd),
+				   utf8_codecvt_facet());
+		throw std::runtime_error(ss.str());
+	    }
+	}
 	m_packet_count = m_iaf.getAudioDataPacketCount();
 	{
 	    uint32_t packet_size = m_iaf.getPacketSizeUpperBound();
