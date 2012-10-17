@@ -8,11 +8,11 @@ namespace afutil {
 	    return "Unsupported file type";
 	else if (code == FOURCC('f','m','t','?'))
 	    return "Data format is not supported for this file type";
-	int i;
-	for (i = 0; i < 4; ++i)
-	    if (!isprint(code & 0xff))
+	int shift;
+	for (shift = 0; shift < 32; shift += 8)
+	    if (!isprint((code >> shift) & 0xff))
 		break;
-	if (i == 4)
+	if (shift == 32)
 	    ss << s << ": "
 	       << static_cast<char>(code >> 24)
 	       << static_cast<char>((code >> 16) & 0xff)
