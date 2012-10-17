@@ -297,6 +297,20 @@ public:
     {
 	CHECKCA(AudioFileSetUserData(m_file.get(), fcc, index, size, data));
     }
+    void getFormatList(std::vector<AudioFormatListItem> *result)
+    {
+	UInt32 size;
+	UInt32 writable;
+	CHECKCA(AudioFileGetPropertyInfo(m_file.get(),
+					 kAudioFilePropertyFormatList,
+					 &size, &writable));
+	size_t count = size / sizeof(AudioFormatListItem);
+	std::vector<AudioFormatListItem> vec(count);
+	CHECKCA(AudioFileGetProperty(m_file.get(),
+				     kAudioFilePropertyFormatList,
+				     &size, &vec[0]));
+	result->swap(vec);
+    }
 };
 
 #endif

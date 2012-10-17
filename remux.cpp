@@ -267,7 +267,9 @@ void show_format(const std::wstring &ifilename)
     AudioFileX iaf(iafid, true);
     AudioStreamBasicDescription asbd;
     iaf.getDataFormat(&asbd);
-    std::wprintf(L"%s\n", afutil::getASBDFormatName(&asbd).c_str());
+    std::vector<AudioFormatListItem> aflist;
+    iaf.getFormatList(&aflist);
+    std::wprintf(L"%s\n", afutil::getASBDFormatName(&aflist[0].mASBD).c_str());
 }
 
 inline bool is_mpeg(uint32_t format)
@@ -280,7 +282,6 @@ class Remuxer {
     std::shared_ptr<FILE> m_ifp, m_ofp;
     AudioFileX m_iaf, m_oaf;
     uint32_t m_oformat;
-    uint32_t m_packet_at_once;
     uint64_t m_current_packet;
     uint64_t m_packet_count;
     uint64_t m_bytes_processed;
@@ -288,6 +289,7 @@ class Remuxer {
     std::vector<uint8_t> m_buffer;
     std::vector<AudioStreamPacketDescription> m_aspd;
     AudioStreamBasicDescription m_asbd;
+    uint32_t m_channel_layout_tag;
     AudioFilePacketTableInfo m_packet_info;
 public:
     Remuxer(const std::wstring &ifilename, const std::wstring &ofilename,
@@ -306,7 +308,11 @@ public:
 	    throw std::runtime_error(ss.str());
 	}
 	m_iaf.attach(iafid, true);
-	m_iaf.getDataFormat(&m_asbd);
+	std::vector<AudioFormatListItem> aflist;
+	m_iaf.getFormatList(&aflist);
+	m_asbd = aflist[0].mASBD;
+	m_channel_layout_tag = aflist[0].mChannelLayoutTag;
+
 	if (is_mpeg(oformat)) {
 	    if (m_asbd.mFormatID != FOURCC('.','m','p','1') &&
 		m_asbd.mFormatID != FOURCC('.','m','p','2') &&
@@ -322,19 +328,19 @@ public:
 	    }
 	}
 	m_packet_count = m_iaf.getAudioDataPacketCount();
+	uint32_t packet_at_once = 1;
 	{
 	    uint32_t packet_size = m_iaf.getPacketSizeUpperBound();
 	    size_t buffer_size = packet_size;
-	    m_packet_at_once = 1;
-	    while (packet_size * m_packet_at_once < 4096) {
-		m_packet_at_once <<= 1;
+	    while (packet_size * packet_at_once < 4096) {
+		packet_at_once <<= 1;
 		buffer_size <<= 1;
 	    }
 	    m_buffer.resize(buffer_size);
 	}
 	std::memset(&m_packet_info, 0, sizeof m_packet_info);
 	getPacketTableInfo(&m_packet_info);
-	m_aspd.resize(m_packet_at_once);
+	m_aspd.resize(packet_at_once);
 
 	m_ofp = util::open_file(ofilename, L"wb+");
 	if (is_mpeg(oformat))
@@ -379,7 +385,7 @@ public:
     int process()
     {
 	UInt32 nbytes = m_buffer.size();
-	UInt32 npackets = m_packet_at_once;
+	UInt32 npackets = m_aspd.size();
 	CHECKCA(AudioFileReadPacketData(m_iaf, false, &nbytes, &m_aspd[0],
 					m_current_packet, &npackets,
 					&m_buffer[0]));
@@ -425,17 +431,16 @@ public:
     void finalize()
     {
 	m_packet_count = m_current_packet;
-	if ((m_packet_info.mPrimingFrames ||
-	     m_packet_info.mRemainderFrames) &&
-	    !m_packet_info.mNumberValidFrames) {
+	AudioFilePacketTableInfo &pi = m_packet_info;
+	uint64_t total = m_packet_count * m_asbd.mFramesPerPacket;
+	if ((pi.mPrimingFrames || pi.mRemainderFrames) &&
+	    !pi.mNumberValidFrames) {
 	    /*
 	     * Take care of iTunSMPB in MP3.
 	     * CoreAudio fills only mPrimingFrames and mRemainderFrames
 	     */
-	    m_packet_info.mNumberValidFrames =
-		m_packet_count * m_asbd.mFramesPerPacket -
-		m_packet_info.mPrimingFrames -
-		m_packet_info.mRemainderFrames;
+	    pi.mNumberValidFrames =
+		total - pi.mPrimingFrames - pi.mRemainderFrames;
 	}
 	if (is_mpeg(m_oformat)) {
 	    std::vector<uint8_t> xing_header;
@@ -450,11 +455,10 @@ public:
 		    prefetch_pos = xing_header.size() +
 			m_packet_pos[m_packet_pos.size() - 8];
 		}
-		if (m_packet_info.mPrimingFrames ||
-		    m_packet_info.mRemainderFrames ||
+		if (pi.mPrimingFrames || pi.mRemainderFrames ||
 		    info_dict.get())
-		    id3::build_id3tag(info_dict.get(), &m_packet_info,
-				      prefetch_pos, &id3tag);
+		    id3::build_id3tag(info_dict.get(), &pi, prefetch_pos,
+				      &id3tag);
 	    }
 	    if (id3tag.size() || xing_header.size()) {
 		util::shift_file_content(m_ofp.get(),
@@ -468,8 +472,7 @@ public:
 	    }
 	} else if (m_asbd.mFormatID != FOURCC('a','l','a','c') ||
 		   m_oformat == kAudioFileCAFType) {
-	    if (m_packet_info.mPrimingFrames ||
-		m_packet_info.mRemainderFrames) {
+	    if (pi.mPrimingFrames || pi.mRemainderFrames) {
 		try {
 		    m_oaf.setPacketTableInfo(&m_packet_info);
 		} catch (...) {}
@@ -480,9 +483,15 @@ private:
     void setupAudioFile()
     {
 	try {
-	    std::shared_ptr<AudioChannelLayout> acl;
-	    m_iaf.getChannelLayout(&acl);
-	    m_oaf.setChannelLayout(acl.get());
+	    if (m_asbd.mFormatID == FOURCC('a','a','c','p')) {
+		AudioChannelLayout acl = { 0 };
+		acl.mChannelLayoutTag = m_channel_layout_tag;
+		m_oaf.setChannelLayout(&acl);
+	    } else {
+		std::shared_ptr<AudioChannelLayout> acl;
+		m_iaf.getChannelLayout(&acl);
+		m_oaf.setChannelLayout(acl.get());
+	    }
 	} catch (const CoreAudioException &e) {
 	    if (!e.isNotSupportedError())
 		throw;
@@ -531,24 +540,41 @@ private:
      */
     void getPacketTableInfo(AudioFilePacketTableInfo *info)
     {
-	try {
-	    m_iaf.getPacketTableInfo(info);
-	} catch (const CoreAudioException &e) {
-	    if (!e.isNotSupportedError())
-		throw;
+	if (!mp4::test_if_mp4(m_ifp.get())) {
+	    try {
+		m_iaf.getPacketTableInfo(info);
+	    } catch (const CoreAudioException &e) {
+		if (!e.isNotSupportedError())
+		    throw;
+	    }
+	    return;
 	}
-	uint32_t iformat = m_iaf.getFileFormat();
 	AudioFilePacketTableInfo itinfo = { 0 };
-	if (mp4::test_if_mp4(m_ifp.get()))
-	    mp4::get_priming_info(m_ifp.get(), &itinfo);
+	mp4::get_priming_info(m_ifp.get(), &itinfo);
 
 	if (itinfo.mPrimingFrames || itinfo.mRemainderFrames) {
 	    uint64_t packet_count = m_iaf.getAudioDataPacketCount();
 
-	    uint64_t total = itinfo.mNumberValidFrames +
+	    uint64_t itotal = itinfo.mNumberValidFrames +
 		itinfo.mPrimingFrames + itinfo.mRemainderFrames;
-	    /* sanity check */
-	    if (total == m_asbd.mFramesPerPacket * packet_count)
+	    uint64_t ptotal = m_asbd.mFramesPerPacket * packet_count;
+
+	    if (m_asbd.mFormatID == FOURCC('a','a','c','h') ||
+		m_asbd.mFormatID == FOURCC('a','a','c','p'))
+	    {
+		if (itotal == ptotal) {
+		    /*
+		     * Looks like iTunSMPB of the source is counted in 
+		     * upsampled scale
+		     */
+		    itinfo.mPrimingFrames >>= 1;
+		    itinfo.mNumberValidFrames >>= 1;
+		    itinfo.mRemainderFrames = ptotal / 2
+			- itinfo.mPrimingFrames - itinfo.mNumberValidFrames;
+		    *info = itinfo;
+		} else if (itotal == ptotal / 2)
+		    *info = itinfo;
+	    } else if (itotal == ptotal)
 		*info = itinfo;
 	}
     }
