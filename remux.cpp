@@ -238,12 +238,14 @@ namespace callback {
     SInt64 size(void *cookie)
     {
 	FILE *fp = static_cast<FILE*>(cookie);
+	std::fflush(fp);
 	return _filelengthi64(_fileno(fp));
     }
 
     OSStatus truncate(void *cookie, SInt64 size)
     {
 	FILE *fp = static_cast<FILE*>(cookie);
+	std::fflush(fp);
 	return _chsize_s(_fileno(fp), size) == 0 ? 0 : ioErr;
     }
 }
