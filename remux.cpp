@@ -261,7 +261,8 @@ void show_format(const std::wstring &ifilename)
 					   callback::size, 0, 0, &iafid));
     } catch (const CoreAudioException &e) {
 	std::stringstream ss;
-	ss << strutil::w2m(ifilename) << ": " << e.what();
+	ss << strutil::w2m(ifilename, utf8_codecvt_facet())
+	   << ": " << e.what();
 	throw std::runtime_error(ss.str());
     }
     AudioFileX iaf(iafid, true);
