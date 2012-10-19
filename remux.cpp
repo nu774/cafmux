@@ -332,6 +332,9 @@ public:
 	uint32_t packet_at_once = 1;
 	{
 	    uint32_t packet_size = m_iaf.getPacketSizeUpperBound();
+	    // sanity check to avoid infinite loop
+	    if (packet_size == 0)
+		throw std::runtime_error("Can't retrieve packet size");
 	    size_t buffer_size = packet_size;
 	    while (packet_size * packet_at_once < 4096) {
 		packet_at_once <<= 1;
@@ -535,10 +538,6 @@ private:
 		throw;
 	}
     }
-    /*
-     * AudioFile properly *writes* PacketTableInfo to M4A (as iTunSMPB).
-     * However, it doesn't *read* it from M4A iTunSMPB.
-     */
     void getPacketTableInfo(AudioFilePacketTableInfo *info)
     {
 	if (!mp4::test_if_mp4(m_ifp.get())) {
