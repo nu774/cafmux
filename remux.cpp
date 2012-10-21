@@ -178,6 +178,11 @@ namespace caf {
 	std::vector<char> info;
 	if (!get_info(fp, &info) || info.size() < 4)
 	    return false;
+
+	uint32_t nent;
+	std::memcpy(&nent, &info[0], 4);
+	nent = b2host32(nent);
+
 	// inside of info tag is delimited with NUL char.
 	std::vector<std::string> tokens;
 	{
@@ -188,6 +193,8 @@ namespace caf {
 		infop += tokens.back().size() + 1;
 	    } while (infop < endp);
 	}
+	nent = std::min(nent, tokens.size() >> 1);
+
 	// get some constants manually
 	const CFDictionaryKeyCallBacks *kcb
 	    = static_cast<const CFDictionaryKeyCallBacks *>(
@@ -197,10 +204,11 @@ namespace caf {
 		util::load_cf_constant("kCFTypeDictionaryValueCallBacks"));
 
 	CFMutableDictionaryRef dictref =
-	    CFDictionaryCreateMutable(0, tokens.size() >> 1, kcb, vcb);
+	    CFDictionaryCreateMutable(0, nent, kcb, vcb);
 	utf8_codecvt_facet u8codec;
 	CFDictionaryPtr dictptr(dictref, CFRelease);
-	for (size_t i = 0; i < tokens.size() >> 1; ++i) {
+
+	for (size_t i = 0; i < nent; ++i) {
 	    CFStringPtr key =
 		afutil::W2CF(strutil::m2w(tokens[2 * i], u8codec));
 	    CFStringPtr value =
