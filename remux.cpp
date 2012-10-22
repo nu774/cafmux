@@ -1,4 +1,11 @@
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <stdexcept>
+#include <sstream>
+#include <iomanip>
 #include <io.h>
 #include <fcntl.h>
 #define NOMINMAX
@@ -690,34 +697,53 @@ void process(const std::wstring &ifilename, const std::wstring &ofilename,
 }
 
 static
+std::string format_fcc(uint32_t fcc)
+{
+    uint8_t ch[5] = { 0 };
+    ch[0] = fcc >> 24;
+    ch[1] = (fcc >> 16) & 0xff;
+    ch[2] = (fcc >> 8) & 0xff;
+    ch[3] = fcc & 0xff;
+    std::stringstream ss;
+    for (size_t i = 0; i < 4; ++i) {
+	if (std::isprint(ch[i], std::locale("C")))
+	    ss << static_cast<char>(ch[i]);
+	else
+	    ss << "\\" << std::setw(3) << std::setfill('0')
+	       << std::oct << static_cast<int>(ch[i]);
+    }
+    return ss.str();
+}
+
+static
 void print_type_info(uint32_t type)
 {
     std::wstring name = afutil::getFileTypeName(type);
     std::vector<std::wstring> extensions;
     afutil::getExtensionsForType(type, &extensions);
-    std::wprintf(L"%c%c%c%c: %s", type >> 24, (type >> 16) & 0xff,
-		 (type >> 8) & 0xff, type & 0xff, name.c_str());
+    std::wprintf(L"%hs: %s", format_fcc(type).c_str(), name.c_str());
     const wchar_t *sep = L" (";
     for (size_t j = 0; j < extensions.size(); ++j) {
 	std::wprintf(L"%s%s", sep, extensions[j].c_str());
 	sep = L", ";
     }
     std::wprintf(L")\n");
+    std::vector<uint32_t> codecs;
+    afutil::getAvailableFormatIDs(type, &codecs);
+    for (size_t i = 0; i < codecs.size(); ++i) {
+	AudioStreamBasicDescription asbd =  { 0 };
+	asbd.mFormatID = codecs[i];
+	try {
+	    std::wprintf(L"    %hs: %s\n", format_fcc(codecs[i]).c_str(),
+			 afutil::getASBDFormatName(&asbd).c_str());
+	} catch (const CoreAudioException &e) {}
+    }
 }
 static
 void list_readable_types()
 {
     std::vector<uint32_t> types;
     afutil::getReadableTypes(&types);
-    for (size_t i = 0; i < types.size(); ++i)
-	print_type_info(types[i]);
-}
-
-static
-void list_writable_types()
-{
-    std::vector<uint32_t> types;
-    afutil::getWritableTypes(&types);
     for (size_t i = 0; i < types.size(); ++i)
 	print_type_info(types[i]);
 }
