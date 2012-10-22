@@ -181,7 +181,7 @@ namespace caf {
 
 	uint32_t nent;
 	std::memcpy(&nent, &info[0], 4);
-	nent = b2host32(nent);
+	nent = util::b2host32(nent);
 
 	// inside of info tag is delimited with NUL char.
 	std::vector<std::string> tokens;
@@ -695,7 +695,8 @@ void print_type_info(uint32_t type)
     std::wstring name = afutil::getFileTypeName(type);
     std::vector<std::wstring> extensions;
     afutil::getExtensionsForType(type, &extensions);
-    std::wprintf(L"%s", name.c_str());
+    std::wprintf(L"%c%c%c%c: %s", type >> 24, (type >> 16) & 0xff,
+		 (type >> 8) & 0xff, type & 0xff, name.c_str());
     const wchar_t *sep = L" (";
     for (size_t j = 0; j < extensions.size(); ++j) {
 	std::wprintf(L"%s%s", sep, extensions[j].c_str());
