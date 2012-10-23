@@ -62,12 +62,10 @@ namespace mp4 {
     /* path is like moov/trak/mdia/minf: first match */
     uint32_t seek_to_path(FILE *fp, const char *path)
     {
-	std::vector<char> vpath(std::strlen(path) + 1);
-	char *bufp = &vpath[0];
-	std::strcpy(bufp, path);
+	strutil::Tokenizer tokens(path, "/");
 	char *box;
 	uint32_t atom_size = 0;
-	while ((box = strutil::strsep(&bufp, "/")) != 0)
+	while ((box = tokens.next()) != 0)
 	    if ((atom_size = seek_to_box(fp, box)) == 0)
 		return 0;
 	return atom_size;
