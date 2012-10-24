@@ -1,4 +1,11 @@
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <stdexcept>
+#include <sstream>
+#include <iomanip>
 #include <io.h>
 #include <fcntl.h>
 #define NOMINMAX
@@ -55,12 +62,10 @@ namespace mp4 {
     /* path is like moov/trak/mdia/minf: first match */
     uint32_t seek_to_path(FILE *fp, const char *path)
     {
-	std::vector<char> vpath(std::strlen(path) + 1);
-	char *bufp = &vpath[0];
-	std::strcpy(bufp, path);
+	strutil::Tokenizer tokens(path, "/");
 	char *box;
 	uint32_t atom_size = 0;
-	while ((box = strutil::strsep(&bufp, "/")) != 0)
+	while ((box = tokens.next()) != 0)
 	    if ((atom_size = seek_to_box(fp, box)) == 0)
 		return 0;
 	return atom_size;
@@ -178,6 +183,11 @@ namespace caf {
 	std::vector<char> info;
 	if (!get_info(fp, &info) || info.size() < 4)
 	    return false;
+
+	uint32_t nent;
+	std::memcpy(&nent, &info[0], 4);
+	nent = util::b2host32(nent);
+
 	// inside of info tag is delimited with NUL char.
 	std::vector<std::string> tokens;
 	{
@@ -188,6 +198,8 @@ namespace caf {
 		infop += tokens.back().size() + 1;
 	    } while (infop < endp);
 	}
+	nent = std::min(nent, tokens.size() >> 1);
+
 	// get some constants manually
 	const CFDictionaryKeyCallBacks *kcb
 	    = static_cast<const CFDictionaryKeyCallBacks *>(
@@ -197,10 +209,11 @@ namespace caf {
 		util::load_cf_constant("kCFTypeDictionaryValueCallBacks"));
 
 	CFMutableDictionaryRef dictref =
-	    CFDictionaryCreateMutable(0, tokens.size() >> 1, kcb, vcb);
+	    CFDictionaryCreateMutable(0, nent, kcb, vcb);
 	utf8_codecvt_facet u8codec;
 	CFDictionaryPtr dictptr(dictref, CFRelease);
-	for (size_t i = 0; i < tokens.size() >> 1; ++i) {
+
+	for (size_t i = 0; i < nent; ++i) {
 	    CFStringPtr key =
 		afutil::W2CF(strutil::m2w(tokens[2 * i], u8codec));
 	    CFStringPtr value =
@@ -332,6 +345,9 @@ public:
 	uint32_t packet_at_once = 1;
 	{
 	    uint32_t packet_size = m_iaf.getPacketSizeUpperBound();
+	    // sanity check to avoid infinite loop
+	    if (packet_size == 0)
+		throw std::runtime_error("Can't retrieve packet size");
 	    size_t buffer_size = packet_size;
 	    while (packet_size * packet_at_once < 4096) {
 		packet_at_once <<= 1;
@@ -535,10 +551,6 @@ private:
 		throw;
 	}
     }
-    /*
-     * AudioFile properly *writes* PacketTableInfo to M4A (as iTunSMPB).
-     * However, it doesn't *read* it from M4A iTunSMPB.
-     */
     void getPacketTableInfo(AudioFilePacketTableInfo *info)
     {
 	if (!mp4::test_if_mp4(m_ifp.get())) {
@@ -683,33 +695,53 @@ void process(const std::wstring &ifilename, const std::wstring &ofilename,
 }
 
 static
+std::string format_fcc(uint32_t fcc)
+{
+    uint8_t ch[5] = { 0 };
+    ch[0] = fcc >> 24;
+    ch[1] = (fcc >> 16) & 0xff;
+    ch[2] = (fcc >> 8) & 0xff;
+    ch[3] = fcc & 0xff;
+    std::stringstream ss;
+    for (size_t i = 0; i < 4; ++i) {
+	if (std::isprint(ch[i], std::locale("C")))
+	    ss << static_cast<char>(ch[i]);
+	else
+	    ss << "\\" << std::setw(3) << std::setfill('0')
+	       << std::oct << static_cast<int>(ch[i]);
+    }
+    return ss.str();
+}
+
+static
 void print_type_info(uint32_t type)
 {
     std::wstring name = afutil::getFileTypeName(type);
     std::vector<std::wstring> extensions;
     afutil::getExtensionsForType(type, &extensions);
-    std::wprintf(L"%s", name.c_str());
+    std::wprintf(L"%hs: %s", format_fcc(type).c_str(), name.c_str());
     const wchar_t *sep = L" (";
     for (size_t j = 0; j < extensions.size(); ++j) {
 	std::wprintf(L"%s%s", sep, extensions[j].c_str());
 	sep = L", ";
     }
     std::wprintf(L")\n");
+    std::vector<uint32_t> codecs;
+    afutil::getAvailableFormatIDs(type, &codecs);
+    for (size_t i = 0; i < codecs.size(); ++i) {
+	AudioStreamBasicDescription asbd =  { 0 };
+	asbd.mFormatID = codecs[i];
+	try {
+	    std::wprintf(L"    %hs: %s\n", format_fcc(codecs[i]).c_str(),
+			 afutil::getASBDFormatName(&asbd).c_str());
+	} catch (const CoreAudioException &e) {}
+    }
 }
 static
 void list_readable_types()
 {
     std::vector<uint32_t> types;
     afutil::getReadableTypes(&types);
-    for (size_t i = 0; i < types.size(); ++i)
-	print_type_info(types[i]);
-}
-
-static
-void list_writable_types()
-{
-    std::vector<uint32_t> types;
-    afutil::getWritableTypes(&types);
     for (size_t i = 0; i < types.size(); ++i)
 	print_type_info(types[i]);
 }

@@ -124,6 +124,18 @@ namespace afutil {
 	}
 	vec->swap(result);
     }
+    inline void getAvailableFormatIDs(uint32_t type,
+				      std::vector<uint32_t> *result)
+    {
+	UInt32 size;
+	CHECKCA(AudioFileGetGlobalInfoSize(
+		   kAudioFileGlobalInfo_AvailableFormatIDs,
+		   sizeof(type), &type, &size));
+	std::vector<uint32_t> vec(size / sizeof(uint32_t));
+	CHECKCA(AudioFileGetGlobalInfo(kAudioFileGlobalInfo_AvailableFormatIDs,
+				       sizeof(type), &type, &size, &vec[0]));
+	result->swap(vec);
+    }
     inline std::wstring
 	getASBDFormatName(const AudioStreamBasicDescription *asbd)
     {
@@ -144,6 +156,18 @@ namespace afutil {
 	CHECKCA(AudioFormatGetProperty(k, size, data, &osize, &dref));
 	CFDictionaryPtr dp(dref, CFRelease);
 	dict->swap(dp);
+    }
+    inline void getChannelLayoutForTag(uint32_t tag,
+				       std::shared_ptr<AudioChannelLayout> *p)
+    {
+	UInt32 k = kAudioFormatProperty_ChannelLayoutForTag;
+	UInt32 size;
+	CHECKCA(AudioFormatGetPropertyInfo(k, sizeof(tag), &tag, &size));
+	std::shared_ptr<AudioChannelLayout>
+	    acl(reinterpret_cast<AudioChannelLayout*>(std::malloc(size)),
+		std::free);
+	CHECKCA(AudioFormatGetProperty(k, sizeof(tag), &tag, &size, acl.get()));
+	p->swap(acl);
     }
 }
 
@@ -267,6 +291,24 @@ public:
 				     &size, &len));
 	return len;
     }
+    uint32_t getMaximumPacketSize()
+    {
+	UInt32 len;
+	UInt32 size = sizeof(len);
+	CHECKCA(AudioFileGetProperty(m_file.get(),
+				     kAudioFilePropertyMaximumPacketSize,
+				     &size, &len));
+	return len;
+    }
+    uint64_t getAudioDataByteCount()
+    {
+	UInt64 len;
+	UInt32 size = sizeof(len);
+	CHECKCA(AudioFileGetProperty(m_file.get(),
+				     kAudioFilePropertyAudioDataByteCount,
+				     &size, &len));
+	return len;
+    }
     void getInfoDictionary(CFDictionaryPtr *dict)
     {
 	CFDictionaryRef dictref;
@@ -310,6 +352,25 @@ public:
 				     kAudioFilePropertyFormatList,
 				     &size, &vec[0]));
 	result->swap(vec);
+    }
+    uint32_t getBitrate()
+    {
+	UInt32 bitrate;
+	UInt32 size = sizeof(bitrate);
+	CHECKCA(AudioFileGetProperty(m_file.get(),
+				     kAudioFilePropertyBitRate,
+				     &size, &bitrate));
+	return bitrate;
+    }
+    int64_t getPacketToByte(int64_t packet)
+    {
+	AudioBytePacketTranslation trans = { 0 };
+	trans.mPacket = packet;
+	UInt32 size = sizeof trans;
+	CHECKCA(AudioFileGetProperty(m_file.get(),
+				     kAudioFilePropertyPacketToByte,
+				     &size, &trans));
+	return trans.mByte;
     }
 };
 

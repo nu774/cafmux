@@ -17,6 +17,12 @@
 #define fseeko _fseeki64
 
 namespace util {
+    template <typename T, size_t size>
+    inline size_t sizeof_array(const T (&)[size])
+    {
+	return size;
+    }
+
     inline uint32_t b2host32(uint32_t n)
     {
 	return _byteswap_ulong(n);
@@ -78,7 +84,7 @@ namespace util {
 	if (!fp) throw_crt_error(fname);
 	return std::shared_ptr<FILE>(fp, std::fclose);
     }
-    inline std::wstring GetModuleFileNameX(HMODULE module)
+    inline std::wstring GetModuleFileNameX(HMODULE module=0)
     {
 	std::vector<wchar_t> buffer(32);
 	DWORD cclen = GetModuleFileNameW(module, &buffer[0],
@@ -90,11 +96,11 @@ namespace util {
 	}
 	return std::wstring(&buffer[0], &buffer[cclen]);
     }
-    inline std::wstring get_module_directory()
+    inline std::wstring get_module_directory(HMODULE module=0)
     {
-	std::wstring selfpath = GetModuleFileNameX(0);
-	const wchar_t *fpos = PathFindFileNameW(selfpath.c_str());
-	return selfpath.substr(0, fpos - selfpath.c_str());
+	std::wstring path = GetModuleFileNameX(module);
+	const wchar_t *fpos = PathFindFileNameW(path.c_str());
+	return path.substr(0, fpos - path.c_str());
     }
     inline void shift_file_content(FILE *fp, int64_t space)
     {
@@ -120,6 +126,17 @@ namespace util {
 	if (!cf)
 	    util::throw_win32_error("CoreFouncation.dll", GetLastError());
 	return GetProcAddress(cf, name);
+    }
+    inline
+    std::wstring PathReplaceExtension(const std::wstring &path,
+				      const wchar_t *ext)
+    {
+	const wchar_t *beg = path.c_str();
+	const wchar_t *end = PathFindExtensionW(beg);
+	std::wstring s(beg, end);
+	if (ext[0] != L'.') s.push_back(L'.');
+	s += ext;
+	return s;
     }
 }
 
