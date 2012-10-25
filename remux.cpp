@@ -283,7 +283,7 @@ void show_format(const std::wstring &ifilename)
     iaf.getDataFormat(&asbd);
     std::vector<AudioFormatListItem> aflist;
     iaf.getFormatList(&aflist);
-    std::wprintf(L"%s\n", afutil::getASBDFormatName(&aflist[0].mASBD).c_str());
+    std::wprintf(L"%s\n", afutil::getASBDFormatName(aflist[0].mASBD).c_str());
 }
 
 inline bool is_mpeg(uint32_t format)
@@ -336,7 +336,7 @@ public:
 		ss << strutil::w2m(ofilename, utf8_codecvt_facet())
 		   << ": Data format is not supported for this file type";
 		ss << "\n" << "Data format: ";
-		ss << strutil::w2m(afutil::getASBDFormatName(&m_asbd),
+		ss << strutil::w2m(afutil::getASBDFormatName(m_asbd),
 				   utf8_codecvt_facet());
 		throw std::runtime_error(ss.str());
 	    }
@@ -385,7 +385,7 @@ public:
 	       << ": " << e.what();
 	    if (e.code() == FOURCC('f','m','t','?')) {
 		ss << "\n" << "Data format: ";
-		ss << strutil::w2m(afutil::getASBDFormatName(&m_asbd),
+		ss << strutil::w2m(afutil::getASBDFormatName(m_asbd),
 				   utf8_codecvt_facet());
 	    }
 	    m_ofp.reset();
@@ -733,7 +733,7 @@ void print_type_info(uint32_t type)
 	asbd.mFormatID = codecs[i];
 	try {
 	    std::wprintf(L"    %hs: %s\n", format_fcc(codecs[i]).c_str(),
-			 afutil::getASBDFormatName(&asbd).c_str());
+			 afutil::getASBDFormatName(asbd).c_str());
 	} catch (const CoreAudioException &e) {}
     }
 }
