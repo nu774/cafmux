@@ -553,7 +553,15 @@ private:
     }
     void getPacketTableInfo(AudioFilePacketTableInfo *info)
     {
-	if (!mp4::test_if_mp4(m_ifp.get())) {
+	/*
+	 * In case of AAC in MP4, we want to read iTunSMPB ourself.
+	 * Otherwise, go the standard way.
+	 */
+	bool isAAC = (m_asbd.mFormatID == FOURCC('a','a','c',' ') ||
+		      m_asbd.mFormatID == FOURCC('a','a','c','h') ||
+		      m_asbd.mFormatID == FOURCC('a','a','c','p') ||
+		      m_asbd.mFormatID == FOURCC('p','a','a','c'));
+	if (!isAAC || !mp4::test_if_mp4(m_ifp.get())) {
 	    try {
 		m_iaf.getPacketTableInfo(info);
 	    } catch (const CoreAudioException &e) {
