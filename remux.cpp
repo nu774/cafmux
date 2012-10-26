@@ -416,7 +416,8 @@ public:
 	     * in case of m4a.
 	     */
 	    if (m_current_packet + npackets >= m_packet_count) {
-		m_aspd[m_packet_count-m_current_packet-1].mVariableFramesInPacket
+		size_t pos = m_packet_count - m_current_packet - 1;
+		m_aspd[pos].mVariableFramesInPacket
 		    = m_asbd.mFramesPerPacket - m_packet_info.mRemainderFrames;
 	    }
 	}
@@ -427,7 +428,7 @@ public:
 	 */
 	if (is_mpeg(m_oformat))
 	    std::fwrite(&m_buffer[0], 1, nbytes, m_ofp.get());
-	else if (m_aspd[0].mDataByteSize)
+	else if (requiresPacketTable())
 	    CHECKCA(AudioFileWritePackets(m_oaf, false, nbytes, &m_aspd[0],
 					  m_current_packet, &npackets,
 					  &m_buffer[0]));
@@ -437,7 +438,8 @@ public:
 
 	m_current_packet += npackets;
 	for (size_t i = 0; i < npackets; ++i) {
-	    m_packet_pos.push_back(m_bytes_processed);
+	    if (m_asbd.mBytesPerPacket == 0)
+		m_packet_pos.push_back(m_bytes_processed);
 	    if (m_aspd[0].mDataByteSize)
 		m_bytes_processed += m_aspd[i].mDataByteSize;
 	    else
@@ -497,6 +499,10 @@ public:
 	}
     }
 private:
+    bool requiresPacketTable()
+    {
+	return m_asbd.mBytesPerFrame == 0 || m_asbd.mFramesPerPacket == 0;
+    }
     void setupAudioFile()
     {
 	try {
@@ -543,9 +549,11 @@ private:
 	}
 
 	try {
-	    double length_in_seconds = 
-		m_packet_count * m_asbd.mFramesPerPacket / m_asbd.mSampleRate;
-	    m_oaf.setReserveDuration(length_in_seconds);
+	    if (requiresPacketTable()) {
+		double length_in_seconds = m_packet_count *
+		    m_asbd.mFramesPerPacket / m_asbd.mSampleRate;
+		m_oaf.setReserveDuration(length_in_seconds);
+	    }
 	} catch (const CoreAudioException &e) {
 	    if (!e.isNotSupportedError())
 		throw;
@@ -629,6 +637,8 @@ private:
     }
     bool isCBR()
     {
+	if (m_asbd.mBytesPerPacket)
+	    return true;
 	int prev_distance = 0;
 	for (size_t i = 1; i < m_packet_pos.size(); ++i) {
 	    int distance = m_packet_pos[i] - m_packet_pos[i - 1];
