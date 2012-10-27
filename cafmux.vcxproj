@@ -80,13 +80,29 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="AudioFileX.cpp" />
     <ClCompile Include="bitstream.cpp" />
+    <ClCompile Include="cautil.cpp" />
     <ClCompile Include="id3.cpp" />
     <ClCompile Include="mpa.cpp" />
     <ClCompile Include="remux.cpp" />
     <ClCompile Include="strutil.cpp" />
     <ClCompile Include="utf8_codecvt_facet.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="AudioFileX.h" />
+    <ClInclude Include="bitstream.h" />
+    <ClInclude Include="cautil.h" />
+    <ClInclude Include="CoreAudio\AudioFile.h" />
+    <ClInclude Include="CoreAudio\AudioFormat.h" />
+    <ClInclude Include="CoreAudio\CoreAudioTypes.h" />
+    <ClInclude Include="CoreAudio\CoreFoundation.h" />
+    <ClInclude Include="CoreAudio\MacTypes.h" />
+    <ClInclude Include="id3.h" />
+    <ClInclude Include="mpa.h" />
+    <ClInclude Include="strutil.h" />
+    <ClInclude Include="utf8_codecvt_facet.hpp" />
+    <ClInclude Include="util.h" />
+    <ClInclude Include="version.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

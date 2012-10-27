@@ -223,9 +223,9 @@ namespace caf {
 
 	for (size_t i = 0; i < nent; ++i) {
 	    CFStringPtr key =
-		afutil::W2CF(strutil::m2w(tokens[2 * i], u8codec));
+		cautil::W2CF(strutil::m2w(tokens[2 * i], u8codec));
 	    CFStringPtr value =
-		afutil::W2CF(strutil::m2w(tokens[2 * i + 1], u8codec));
+		cautil::W2CF(strutil::m2w(tokens[2 * i + 1], u8codec));
 	    CFDictionarySetValue(dictref, key.get(), value.get());
 	}
 	dict->swap(dictptr);
@@ -501,7 +501,7 @@ public:
 		   m_oformat == kAudioFileCAFType) {
 	    if (pi.mPrimingFrames || pi.mRemainderFrames) {
 		try {
-		    m_oaf.setPacketTableInfo(&m_packet_info);
+		    m_oaf.setPacketTableInfo(m_packet_info);
 		} catch (...) {}
 	    }
 	}
@@ -520,11 +520,11 @@ private:
 	    if (m_asbd.mFormatID == FOURCC('a','a','c','p')) {
 		AudioChannelLayout acl = { 0 };
 		acl.mChannelLayoutTag = m_channel_layout_tag;
-		m_oaf.setChannelLayout(&acl);
+		m_oaf.setChannelLayout(acl);
 	    } else {
 		std::shared_ptr<AudioChannelLayout> acl;
 		m_iaf.getChannelLayout(&acl);
-		m_oaf.setChannelLayout(acl.get());
+		m_oaf.setChannelLayout(*acl.get());
 	    }
 	} catch (const CoreAudioException &e) {
 	    if (!e.isNotSupportedError())

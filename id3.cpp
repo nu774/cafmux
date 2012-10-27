@@ -124,9 +124,9 @@ namespace id3 {
 		std::vector<uint8_t> *vp =
 		    static_cast<std::vector<uint8_t>*>(c);
 		std::wstring wkey =
-		    afutil::CF2W(static_cast<CFStringRef>(k));
+		    cautil::CF2W(static_cast<CFStringRef>(k));
 		std::wstring wvalue =
-		    afutil::CF2W(static_cast<CFStringRef>(v));
+		    cautil::CF2W(static_cast<CFStringRef>(v));
 		std::string skey = strutil::w2m(wkey, utf8_codecvt_facet());
 		std::vector<uint8_t> frame;
 		build_text_frame(skey.c_str(), wvalue.c_str(), &frame);
@@ -186,12 +186,12 @@ namespace id3 {
 		CFMutableDictionaryRef dp =
 		    static_cast<CFMutableDictionaryRef>(c);
 		std::wstring wkey =
-		    afutil::CF2W(static_cast<CFStringRef>(k));
+		    cautil::CF2W(static_cast<CFStringRef>(k));
 		std::string skey = strutil::w2m(wkey, utf8);
 		const char *cafname = get_cafname(skey.c_str());
 		if (cafname) {
 		    std::wstring wcafname = strutil::m2w(cafname, utf8);
-		    CFStringPtr cafkey = afutil::W2CF(wcafname);
+		    CFStringPtr cafkey = cautil::W2CF(wcafname);
 		    CFDictionarySetValue(dp, cafkey.get(), v);
 		}
 	    }
