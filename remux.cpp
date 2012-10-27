@@ -21,115 +21,125 @@
 #include "id3.h"
 #include "version.h"
 
-namespace mp4 {
-    bool test_if_mp4(FILE *fp)
+#define lseek64 _lseeki64
+
+class FilePositionSaver {
+    int m_fd;
+    int64_t m_offset;
+public:
+    FilePositionSaver(int fd): m_fd(fd)
     {
-	fpos_t cur;
-	std::fgetpos(fp, &cur);
-	fseeko(fp, 0, SEEK_SET);
+	m_offset = lseek64(m_fd, 0, SEEK_CUR);
+    }
+    ~FilePositionSaver()
+    {
+	lseek64(m_fd, m_offset, SEEK_SET);
+    }
+};
+
+namespace mp4 {
+    bool test_if_mp4(int fd)
+    {
+	FilePositionSaver _(fd);
+	lseek64(fd, 0, SEEK_SET);
 	char buf[8];
-	if (std::fread(buf, 1, 8, fp) != 8)
+	if (read(fd, buf, 8) != 8)
 	    return false;
-	std::fsetpos(fp, &cur);
 	return std::memcmp(&buf[4], "ftyp", 4) == 0;
     }
-    uint32_t next_box(FILE *fp, char *name, int64_t *rest)
+    uint32_t next_box(int fd, char *name, int64_t *rest)
     {
 	if (rest && *rest < 8)
 	    return 0;
 	uint32_t atom_size;
-	if ((std::fread(&atom_size, 4, 1, fp) < 1) ||
-	    (std::fread(name, 1, 4, fp) < 4))
+	if (read(fd, &atom_size, 4) < 4 || read(fd, name, 4) < 4)
 	    return 0;
 	atom_size = util::b2host32(atom_size);
 	if (rest)
 	    *rest -= atom_size;
 	return atom_size - 8;
     }
-    uint32_t seek_to_box(FILE *fp, const char *name)
+    uint32_t seek_to_box(int fd, const char *name)
     {
 	for (;;) {
 	    uint32_t atom_size;
 	    char atom_name[4];
-	    if ((atom_size = next_box(fp, atom_name, 0)) == 0)
+	    if ((atom_size = next_box(fd, atom_name, 0)) == 0)
 		return 0;
 	    if (!std::memcmp(atom_name, name, 4))
 		return atom_size;
-	    if (fseeko(fp, atom_size, SEEK_CUR) != 0)
+	    if (lseek64(fd, atom_size, SEEK_CUR) < 0)
 		return 0;
 	}
     }
     /* path is like moov/trak/mdia/minf: first match */
-    uint32_t seek_to_path(FILE *fp, const char *path)
+    uint32_t seek_to_path(int fd, const char *path)
     {
 	strutil::Tokenizer tokens(path, "/");
 	char *box;
 	uint32_t atom_size = 0;
 	while ((box = tokens.next()) != 0)
-	    if ((atom_size = seek_to_box(fp, box)) == 0)
+	    if ((atom_size = seek_to_box(fd, box)) == 0)
 		return 0;
 	return atom_size;
     }
-    bool get_iTunSMPB(FILE *fp, std::string *result)
+    bool get_iTunSMPB(int fd, std::string *result)
     {
+	FilePositionSaver _(fd);
+	lseek64(fd, 0, SEEK_SET);
+
 	uint32_t atom_size;
-	if (!(atom_size = seek_to_path(fp, "moov/udta/meta")) ||
-	    atom_size < 4)
+	if (!(atom_size = seek_to_path(fd, "moov/udta/meta")) || atom_size < 4)
 	    return false;
-	if (fseeko(fp, 4, SEEK_CUR) != 0)
+	if (lseek64(fd, 4, SEEK_CUR) < 0)
 	    return false;
-	int64_t ilst_size = seek_to_path(fp, "ilst");
+	int64_t ilst_size = seek_to_path(fd, "ilst");
 	if (!ilst_size)
 	    return false;
 	char name[4];
-	while ((atom_size = next_box(fp, name, &ilst_size)) != 0) {
+	while ((atom_size = next_box(fd, name, &ilst_size)) != 0) {
 	    if (std::memcmp(name, "----", 4)) {
-		if (fseeko(fp, atom_size, SEEK_CUR) != 0)
+		if (lseek64(fd, atom_size, SEEK_CUR) < 0)
 		    return false;
 		continue;
 	    }
 	    int64_t limit = atom_size;
-	    fpos_t pos;
-	    std::fgetpos(fp, &pos);
+	    int64_t pos = lseek64(fd, 0, SEEK_CUR);
 	    bool found = false;
 	    std::vector<char> data;
-	    while ((atom_size = next_box(fp, name, &limit)) != 0) {
+	    while ((atom_size = next_box(fd, name, &limit)) != 0) {
 		if (!std::memcmp(name, "name", 4)) {
 		    if (atom_size < 12) // 4 + strlen("iTunSMPB")
 			break;
 		    std::vector<char> buf(atom_size);
-		    if (std::fread(&buf[0], 1, atom_size, fp) != 12)
+		    if (read(fd, &buf[0], atom_size) != 12)
 			return false;
 		    if (std::memcmp(&buf[4], "iTunSMPB", 8))
 			break;
 		    found = true;
 		} else if (!std::memcmp(name, "data", 4)) {
 		    data.resize(atom_size);
-		    if (std::fread(&data[0], 1, atom_size, fp) != atom_size)
+		    if (read(fd, &data[0], atom_size) != atom_size)
 			return false;
-		} else if (fseeko(fp, atom_size, SEEK_CUR) != 0) {
+		} else if (lseek64(fd, atom_size, SEEK_CUR) < 0) {
 		    return false;
 		}
 	    }
-	    std::fsetpos(fp, &pos);
-	    if (fseeko(fp, limit, SEEK_CUR) != 0)
-		return false;
 	    if (found) {
 		std::string ss(data.begin() + 8, data.end());
 		result->swap(ss);
 		return true;
 	    }
+	    if (lseek64(fd, pos + limit, SEEK_SET) < 0)
+		return false;
 	}
 	return false;
     }
-    bool get_priming_info(FILE *fp, AudioFilePacketTableInfo *info)
+    bool get_priming_info(int fd, AudioFilePacketTableInfo *info)
     {
-	fpos_t pos;
 	bool result = false;
-	std::fgetpos(fp, &pos);
 	std::string data;
-	fseeko(fp, 0, SEEK_SET);
-	if ((result = get_iTunSMPB(fp, &data)) == true) {
+	if ((result = get_iTunSMPB(fd, &data)) == true) {
 	    uint32_t a, b, c;
 	    uint64_t d;
 	    if (std::sscanf(data.c_str(), "%x %x %x %llx",
@@ -141,47 +151,45 @@ namespace mp4 {
 		info->mNumberValidFrames = d;
 	    }
 	}
-	std::fsetpos(fp, &pos);
 	return result;
     }
 }
 
 namespace caf {
-    uint64_t next_chunk(FILE *fp, char *name)
+    uint64_t next_chunk(int fd, char *name)
     {
 	uint64_t size;
-	if (std::fread(name, 1, 4, fp) != 4 || std::fread(&size, 8, 1, fp) != 1)
+	if (read(fd, name, 4) != 4 || read(fd, &size, 8) != 8)
 	    return 0;
 	return util::b2host64(size);
     }
-    bool get_info(FILE *fp, std::vector<char> *info)
+    bool get_info(int fd, std::vector<char> *info)
     {
-	fpos_t pos;
-	std::fgetpos(fp, &pos);
-	fseeko(fp, 8, SEEK_SET);
+	FilePositionSaver _(fd);
+	lseek64(fd, 8, SEEK_SET);
+
 	uint64_t chunk_size;
 	char chunk_name[4];
 	bool found = false;
-	while ((chunk_size = next_chunk(fp, chunk_name)) > 0) {
+	while ((chunk_size = next_chunk(fd, chunk_name)) > 0) {
 	    if (std::memcmp(chunk_name, "info", 4)) {
-		if (fseeko(fp, chunk_size, SEEK_CUR) != 0)
+		if (lseek64(fd, chunk_size, SEEK_CUR) < 0)
 		    break;
 	    } else {
 		std::vector<char> buf(chunk_size);
-		if (std::fread(&buf[0], 1, buf.size(), fp) != buf.size())
+		if (read(fd, &buf[0],  buf.size()) != buf.size())
 		    break;
 		info->swap(buf);
 		found = true;
 		break;
 	    }
 	}
-	std::fsetpos(fp, &pos);
 	return found;
     }
-    bool get_info_dictionary(FILE *fp, CFDictionaryPtr *dict)
+    bool get_info_dictionary(int fd, CFDictionaryPtr *dict)
     {
 	std::vector<char> info;
-	if (!get_info(fp, &info) || info.size() < 4)
+	if (!get_info(fd, &info) || info.size() < 4)
 	    return false;
 
 	uint32_t nent;
@@ -231,35 +239,35 @@ namespace callback {
     OSStatus read(void *cookie, SInt64 pos, UInt32 count, void *data,
 		  UInt32 *nread)
     {
-	FILE *fp = static_cast<FILE*>(cookie);
-	if (fseeko(fp, pos, SEEK_SET) == -1)
+	int fd = fileno(static_cast<FILE*>(cookie));
+	if (lseek64(fd, pos, SEEK_SET) == -1)
 	    return ioErr;
-	*nread = std::fread(data, 1, count, fp);
-	return *nread >= 0 ? 0 : ioErr;
+	int n = ::read(fd, data, count);
+	*nread = std::max(n, 0);
+	return n >= 0 ? 0 : ioErr;
     }
 
     OSStatus write(void *cookie, SInt64 pos, UInt32 count, const void *data,
 		   UInt32 *nwritten)
     {
-	FILE *fp = static_cast<FILE*>(cookie);
-	if (fseeko(fp, pos, SEEK_SET) == -1)
+	int fd = fileno(static_cast<FILE*>(cookie));
+	if (lseek64(fd, pos, SEEK_SET) == -1)
 	    return ioErr;
-	*nwritten = std::fwrite(data, 1, count, fp);
-	return *nwritten == count ? 0 : ioErr;
+	int n = ::write(fd, data, count);
+	*nwritten = std::max(n, 0);
+	return n >= 0 ? 0 : ioErr;
     }
 
     SInt64 size(void *cookie)
     {
-	FILE *fp = static_cast<FILE*>(cookie);
-	std::fflush(fp);
-	return _filelengthi64(_fileno(fp));
+	int fd = fileno(static_cast<FILE*>(cookie));
+	return _filelengthi64(fd);
     }
 
     OSStatus truncate(void *cookie, SInt64 size)
     {
-	FILE *fp = static_cast<FILE*>(cookie);
-	std::fflush(fp);
-	return _chsize_s(_fileno(fp), size) == 0 ? 0 : ioErr;
+	int fd = fileno(static_cast<FILE*>(cookie));
+	return _chsize_s(fd, size) == 0 ? 0 : ioErr;
     }
 }
 
@@ -270,8 +278,8 @@ void show_format(const std::wstring &ifilename)
 
     AudioFileID iafid;
     try {
-	CHECKCA(AudioFileOpenWithCallbacks(ifp.get(), callback::read, 0, 
-					   callback::size, 0, 0, &iafid));
+	CHECKCA(AudioFileOpenWithCallbacks(ifp.get(), callback::read,
+					   0, callback::size, 0, 0, &iafid));
     } catch (const CoreAudioException &e) {
 	std::stringstream ss;
 	ss << strutil::w2m(ifilename, utf8_codecvt_facet())
@@ -313,7 +321,8 @@ public:
 	m_ifp = util::open_file(ifilename, L"rb");
 	AudioFileID iafid;
 	try {
-	    CHECKCA(AudioFileOpenWithCallbacks(m_ifp.get(), callback::read, 0, 
+	    CHECKCA(AudioFileOpenWithCallbacks(m_ifp.get(),
+					       callback::read, 0, 
 					       callback::size, 0, 0, &iafid));
 	} catch (const CoreAudioException &e) {
 	    std::stringstream ss;
@@ -427,7 +436,7 @@ public:
 	 * packet information is in use for the format.
 	 */
 	if (is_mpeg(m_oformat))
-	    std::fwrite(&m_buffer[0], 1, nbytes, m_ofp.get());
+	    write(ofd(), &m_buffer[0], nbytes);
 	else if (requiresPacketTable())
 	    CHECKCA(AudioFileWritePackets(m_oaf, false, nbytes, &m_aspd[0],
 					  m_current_packet, &npackets,
@@ -480,14 +489,13 @@ public:
 				      &id3tag);
 	    }
 	    if (id3tag.size() || xing_header.size()) {
-		util::shift_file_content(m_ofp.get(),
+		util::shift_file_content(ofd(),
 					 id3tag.size() + xing_header.size());
-		fseeko(m_ofp.get(), 0, SEEK_SET);
+		lseek64(ofd(), 0, SEEK_SET);
 		if (id3tag.size())
-		    std::fwrite(&id3tag[0], 1, id3tag.size(), m_ofp.get());
+		    write(ofd(), &id3tag[0], id3tag.size());
 		if (xing_header.size())
-		    std::fwrite(&xing_header[0], 1, xing_header.size(),
-				m_ofp.get());
+		    write(ofd(), &xing_header[0], xing_header.size());
 	    }
 	} else if (m_asbd.mFormatID != FOURCC('a','l','a','c') ||
 		   m_oformat == kAudioFileCAFType) {
@@ -499,6 +507,9 @@ public:
 	}
     }
 private:
+    int ifd() { return fileno(m_ifp.get()); }
+    int ofd() { return fileno(m_ofp.get()); }
+
     bool requiresPacketTable()
     {
 	return m_asbd.mBytesPerFrame == 0 || m_asbd.mFramesPerPacket == 0;
@@ -569,7 +580,7 @@ private:
 		      m_asbd.mFormatID == FOURCC('a','a','c','h') ||
 		      m_asbd.mFormatID == FOURCC('a','a','c','p') ||
 		      m_asbd.mFormatID == FOURCC('p','a','a','c'));
-	if (!isAAC || !mp4::test_if_mp4(m_ifp.get())) {
+	if (!isAAC || !mp4::test_if_mp4(ifd())) {
 	    try {
 		m_iaf.getPacketTableInfo(info);
 	    } catch (const CoreAudioException &e) {
@@ -579,7 +590,7 @@ private:
 	    return;
 	}
 	AudioFilePacketTableInfo itinfo = { 0 };
-	mp4::get_priming_info(m_ifp.get(), &itinfo);
+	mp4::get_priming_info(ifd(), &itinfo);
 
 	if (itinfo.mPrimingFrames || itinfo.mRemainderFrames) {
 	    uint64_t packet_count = m_iaf.getAudioDataPacketCount();
@@ -616,7 +627,7 @@ private:
 	     * but not to *load* it from CAF (why?).
 	     * Anyway, therefore we try to manually load it.
 	     */
-	    caf::get_info_dictionary(m_ifp.get(), dict);
+	    caf::get_info_dictionary(ifd(), dict);
 	else if (format == kAudioFileAIFFType || format == kAudioFileAIFCType) {
 	    std::vector<uint8_t> id3;
 	    try {
@@ -752,7 +763,7 @@ void print_type_info(uint32_t type)
 	try {
 	    std::wprintf(L"    %hs: %s\n", format_fcc(codecs[i]).c_str(),
 			 afutil::getASBDFormatName(asbd).c_str());
-	} catch (const CoreAudioException &e) {}
+	} catch (...) {}
     }
 }
 static
