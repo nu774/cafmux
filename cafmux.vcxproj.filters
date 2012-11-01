@@ -4,9 +4,6 @@
     <ClCompile Include="bitstream.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="utf8_codecvt_facet.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="id3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -20,6 +17,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="cautil.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="win32util.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -50,9 +50,6 @@
     <ClInclude Include="strutil.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="utf8_codecvt_facet.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="util.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -72,6 +69,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CoreAudio\MacTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="dl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="win32util.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

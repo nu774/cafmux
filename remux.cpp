@@ -13,12 +13,12 @@
 #include <shlwapi.h>
 #include <delayimp.h>
 #include <crtdbg.h>
-#include "utf8_codecvt_facet.hpp"
 #include "strutil.h"
 #include "util.h"
 #include "AudioFileX.h"
 #include "mpa.h"
 #include "id3.h"
+#include "dl.h"
 #include "version.h"
 
 #define lseek64 _lseeki64
@@ -36,6 +36,28 @@ public:
 	lseek64(m_fd, m_offset, SEEK_SET);
     }
 };
+
+namespace util {
+    std::shared_ptr<FILE> open_file(const std::wstring &fname,
+				    const wchar_t *mode)
+    {
+	FILE * fp = _wfopen(fname.c_str(), mode);
+	if (!fp) throw_crt_error(fname);
+	return std::shared_ptr<FILE>(fp, std::fclose);
+    }
+    void shift_file_content(int fd, int64_t space)
+    {
+	int64_t current_size = _filelengthi64(fd);
+	int64_t begin, end = current_size;
+	char buf[8192];
+	for (; (begin = std::max(0LL, end - 8192)) < end; end = begin) {
+	    _lseeki64(fd, begin, SEEK_SET);
+	    read(fd, buf, end - begin);
+	    _lseeki64(fd, begin + space, SEEK_SET);
+	    write(fd, buf, end - begin);
+	}
+    }
+}
 
 namespace mp4 {
     bool test_if_mp4(int fd)
@@ -75,7 +97,7 @@ namespace mp4 {
     /* path is like moov/trak/mdia/minf: first match */
     uint32_t seek_to_path(int fd, const char *path)
     {
-	strutil::Tokenizer tokens(path, "/");
+	strutil::Tokenizer<char> tokens(path, "/");
 	char *box;
 	uint32_t atom_size = 0;
 	while ((box = tokens.next()) != 0)
@@ -209,23 +231,21 @@ namespace caf {
 	nent = std::min(nent, tokens.size() >> 1);
 
 	// get some constants manually
-	const CFDictionaryKeyCallBacks *kcb
-	    = static_cast<const CFDictionaryKeyCallBacks *>(
-		util::load_cf_constant("kCFTypeDictionaryKeyCallBacks"));
-	const CFDictionaryValueCallBacks *vcb
-	    = static_cast<const CFDictionaryValueCallBacks *>(
-		util::load_cf_constant("kCFTypeDictionaryValueCallBacks"));
+	DL dll(GetModuleHandleA("CoreFoundation.dll"), false);
+	const CFDictionaryKeyCallBacks *kcb =
+	    dll.fetch("kCFTypeDictionaryKeyCallBacks");
+	const CFDictionaryValueCallBacks *vcb = 
+	    dll.fetch("kCFTypeDictionaryValueCallBacks");
 
 	CFMutableDictionaryRef dictref =
 	    CFDictionaryCreateMutable(0, nent, kcb, vcb);
-	utf8_codecvt_facet u8codec;
 	CFDictionaryPtr dictptr(dictref, CFRelease);
 
 	for (size_t i = 0; i < nent; ++i) {
 	    CFStringPtr key =
-		cautil::W2CF(strutil::m2w(tokens[2 * i], u8codec));
+		cautil::W2CF(strutil::us2w(tokens[2 * i]));
 	    CFStringPtr value =
-		cautil::W2CF(strutil::m2w(tokens[2 * i + 1], u8codec));
+		cautil::W2CF(strutil::us2w(tokens[2 * i + 1]));
 	    CFDictionarySetValue(dictref, key.get(), value.get());
 	}
 	dict->swap(dictptr);
@@ -282,8 +302,7 @@ void show_format(const std::wstring &ifilename)
 					   0, callback::size, 0, 0, &iafid));
     } catch (const CoreAudioException &e) {
 	std::stringstream ss;
-	ss << strutil::w2m(ifilename, utf8_codecvt_facet())
-	   << ": " << e.what();
+	ss << strutil::w2us(ifilename) << ": " << e.what();
 	throw std::runtime_error(ss.str());
     }
     AudioFileX iaf(iafid, true);
@@ -326,8 +345,7 @@ public:
 					       callback::size, 0, 0, &iafid));
 	} catch (const CoreAudioException &e) {
 	    std::stringstream ss;
-	    ss << strutil::w2m(ifilename, utf8_codecvt_facet())
-	       << ": " << e.what();
+	    ss << strutil::w2us(ifilename) << ": " << e.what();
 	    throw std::runtime_error(ss.str());
 	}
 	m_iaf.attach(iafid, true);
@@ -342,11 +360,10 @@ public:
 		m_asbd.mFormatID != FOURCC('.','m','p','3'))
 	    {
 		std::stringstream ss;
-		ss << strutil::w2m(ofilename, utf8_codecvt_facet())
+		ss << strutil::w2us(ofilename)
 		   << ": Data format is not supported for this file type";
 		ss << "\n" << "Data format: ";
-		ss << strutil::w2m(afutil::getASBDFormatName(m_asbd),
-				   utf8_codecvt_facet());
+		ss << strutil::w2us(afutil::getASBDFormatName(m_asbd));
 		throw std::runtime_error(ss.str());
 	    }
 	}
@@ -390,12 +407,10 @@ public:
 						     0, &oafid));
 	} catch (const CoreAudioException &e) {
 	    std::stringstream ss;
-	    ss << strutil::w2m(ofilename, utf8_codecvt_facet())
-	       << ": " << e.what();
+	    ss << strutil::w2us(ofilename) << ": " << e.what();
 	    if (e.code() == FOURCC('f','m','t','?')) {
 		ss << "\n" << "Data format: ";
-		ss << strutil::w2m(afutil::getASBDFormatName(m_asbd),
-				   utf8_codecvt_facet());
+		ss << strutil::w2us(afutil::getASBDFormatName(m_asbd));
 	    }
 	    m_ofp.reset();
 	    DeleteFileW(ofilename.c_str());
@@ -801,7 +816,7 @@ void set_dll_directories()
 	    }
 	}
     }
-    std::wstring dir = util::get_module_directory() + L"QTfiles";
+    std::wstring dir = win32::get_module_directory() + L"QTfiles";
     std::wstringstream ss;
     ss << dir << L";" << searchPaths;
     searchPaths = ss.str();
@@ -811,7 +826,7 @@ void set_dll_directories()
 static
 FARPROC WINAPI dll_failure_hook(unsigned notify, PDelayLoadInfo pdli)
 {
-    util::throw_win32_error(pdli->szDll, pdli->dwLastError);
+    win32::throw_error(pdli->szDll, pdli->dwLastError);
     return 0;
 }
 
@@ -867,8 +882,7 @@ int wmain(int argc, wchar_t **argv)
 	}
 	return 0;
     } catch (const std::exception & e) {
-	std::fwprintf(stderr, L"ERROR: %s\n",
-		 strutil::m2w(e.what(), utf8_codecvt_facet()));
+	std::fwprintf(stderr, L"ERROR: %s\n", strutil::us2w(e.what()));
 	return 2;
     }
 }

@@ -1,10 +1,10 @@
 #define NOMINMAX
 #include <windows.h>
 #include "id3.h"
-#include "utf8_codecvt_facet.hpp"
 #include "strutil.h"
 #include "util.h"
 #include "AudioFileX.h"
+#include "dl.h"
 
 namespace id3 {
     struct id3info {
@@ -72,7 +72,7 @@ namespace id3 {
 	} else {
 	    vec.resize(len + 2);
 	    vec[0] = 0;
-	    std::string s = strutil::w2m(value, utf8_codecvt_facet());
+	    std::string s = strutil::w2us(value);
 	    std::memcpy(&vec[1], s.c_str(), len);
 	}
 	result->swap(vec);
@@ -127,7 +127,7 @@ namespace id3 {
 		    cautil::CF2W(static_cast<CFStringRef>(k));
 		std::wstring wvalue =
 		    cautil::CF2W(static_cast<CFStringRef>(v));
-		std::string skey = strutil::w2m(wkey, utf8_codecvt_facet());
+		std::string skey = strutil::w2us(wkey);
 		std::vector<uint8_t> frame;
 		build_text_frame(skey.c_str(), wvalue.c_str(), &frame);
 		if (frame.size())
@@ -147,7 +147,7 @@ namespace id3 {
 			 packet_info->mRemainderFrames,
 			 packet_info->mNumberValidFrames,
 			 prefetch_point);
-	    std::wstring ws = strutil::m2w(buf, utf8_codecvt_facet());
+	    std::wstring ws = strutil::us2w(buf);
 	    std::vector<uint8_t> frame;
 	    build_comment_frame("eng", L"iTunPGAP", L"0", &frame);
 	    std::copy(frame.begin(), frame.end(), std::back_inserter(vec));
@@ -167,12 +167,11 @@ namespace id3 {
 	CFDictionaryPtr idict;
 	afutil::id3TagToDictinary(id3, size, &idict);
 	// get some constants manually
-	const CFDictionaryKeyCallBacks *kcb
-	    = static_cast<const CFDictionaryKeyCallBacks *>(
-		util::load_cf_constant("kCFTypeDictionaryKeyCallBacks"));
-	const CFDictionaryValueCallBacks *vcb
-	    = static_cast<const CFDictionaryValueCallBacks *>(
-		util::load_cf_constant("kCFTypeDictionaryValueCallBacks"));
+	DL dll(GetModuleHandleA("CoreFoundation.dll"), false);
+	const CFDictionaryKeyCallBacks *kcb =
+	    dll.fetch("kCFTypeDictionaryKeyCallBacks");
+	const CFDictionaryValueCallBacks *vcb = 
+	    dll.fetch("kCFTypeDictionaryValueCallBacks");
 
 	CFIndex count = CFDictionaryGetCount(idict.get());
 	CFMutableDictionaryRef dictref =
@@ -181,16 +180,14 @@ namespace id3 {
 	struct dict_callback {
 	    static void f(const void *k, const void *v, void *c)
 	    {
-		utf8_codecvt_facet utf8;
-
 		CFMutableDictionaryRef dp =
 		    static_cast<CFMutableDictionaryRef>(c);
 		std::wstring wkey =
 		    cautil::CF2W(static_cast<CFStringRef>(k));
-		std::string skey = strutil::w2m(wkey, utf8);
+		std::string skey = strutil::w2us(wkey);
 		const char *cafname = get_cafname(skey.c_str());
 		if (cafname) {
-		    std::wstring wcafname = strutil::m2w(cafname, utf8);
+		    std::wstring wcafname = strutil::us2w(cafname);
 		    CFStringPtr cafkey = cautil::W2CF(wcafname);
 		    CFDictionarySetValue(dp, cafkey.get(), v);
 		}
