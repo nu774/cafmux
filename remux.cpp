@@ -229,16 +229,7 @@ namespace caf {
 	    } while (infop < endp);
 	}
 	nent = std::min(nent, tokens.size() >> 1);
-
-	// get some constants manually
-	DL dll(GetModuleHandleA("CoreFoundation.dll"), false);
-	const CFDictionaryKeyCallBacks *kcb =
-	    dll.fetch("kCFTypeDictionaryKeyCallBacks");
-	const CFDictionaryValueCallBacks *vcb = 
-	    dll.fetch("kCFTypeDictionaryValueCallBacks");
-
-	CFMutableDictionaryRef dictref =
-	    CFDictionaryCreateMutable(0, nent, kcb, vcb);
+	CFMutableDictionaryRef dictref = cautil::CreateDictionary(nent);
 	CFDictionaryPtr dictptr(dictref, CFRelease);
 
 	for (size_t i = 0; i < nent; ++i) {

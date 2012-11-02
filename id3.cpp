@@ -166,16 +166,9 @@ namespace id3 {
     {
 	CFDictionaryPtr idict;
 	afutil::id3TagToDictinary(id3, size, &idict);
-	// get some constants manually
-	DL dll(GetModuleHandleA("CoreFoundation.dll"), false);
-	const CFDictionaryKeyCallBacks *kcb =
-	    dll.fetch("kCFTypeDictionaryKeyCallBacks");
-	const CFDictionaryValueCallBacks *vcb = 
-	    dll.fetch("kCFTypeDictionaryValueCallBacks");
 
 	CFIndex count = CFDictionaryGetCount(idict.get());
-	CFMutableDictionaryRef dictref =
-	    CFDictionaryCreateMutable(0, count, kcb, vcb);
+	CFMutableDictionaryRef dictref = cautil::CreateDictionary(count);
 	CFDictionaryPtr dictptr(dictref, CFRelease);
 	struct dict_callback {
 	    static void f(const void *k, const void *v, void *c)
