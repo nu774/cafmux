@@ -13,6 +13,7 @@
 #include <shlwapi.h>
 #include <delayimp.h>
 #include <crtdbg.h>
+#include "wgetopt.h"
 #include "strutil.h"
 #include "util.h"
 #include "AudioFileX.h"
@@ -38,13 +39,6 @@ public:
 };
 
 namespace util {
-    std::shared_ptr<FILE> open_file(const std::wstring &fname,
-				    const wchar_t *mode)
-    {
-	FILE * fp = _wfopen(fname.c_str(), mode);
-	if (!fp) throw_crt_error(fname);
-	return std::shared_ptr<FILE>(fp, std::fclose);
-    }
     void shift_file_content(int fd, int64_t space)
     {
 	int64_t current_size = _filelengthi64(fd);
@@ -285,7 +279,7 @@ namespace callback {
 static
 void show_format(const std::wstring &ifilename)
 {
-    std::shared_ptr<FILE> ifp(util::open_file(ifilename, L"rb"));
+    std::shared_ptr<FILE> ifp(win32::fopen(ifilename, L"rb"));
 
     AudioFileID iafid;
     try {
@@ -328,7 +322,7 @@ public:
 	    uint32_t oformat)
 	: m_oformat(oformat), m_current_packet(0), m_bytes_processed(0)
     {
-	m_ifp = util::open_file(ifilename, L"rb");
+	m_ifp = win32::fopen(ifilename, L"rb");
 	AudioFileID iafid;
 	try {
 	    CHECKCA(AudioFileOpenWithCallbacks(m_ifp.get(),
@@ -376,7 +370,7 @@ public:
 	getPacketTableInfo(&m_packet_info);
 	m_aspd.resize(packet_at_once);
 
-	m_ofp = util::open_file(ofilename, L"wb+");
+	m_ofp = win32::fopen(ofilename, L"wb+");
 	if (is_mpeg(oformat))
 	    return;
 
@@ -837,6 +831,7 @@ int wmain(int argc, wchar_t **argv)
 #ifdef _DEBUG
     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF|_CRTDBG_CHECK_ALWAYS_DF);
 #endif
+    _setmode(0, _O_BINARY);
     _setmode(1, _O_U8TEXT);
     _setmode(2, _O_U8TEXT);
     std::setbuf(stderr, 0);
@@ -844,30 +839,32 @@ int wmain(int argc, wchar_t **argv)
     bool opt_p = false;
     wchar_t *opt_i = 0;
 
-    for (++argv, --argc; *argv && **argv == '-'; ++argv, --argc) {
-	if (argv[0][1] == 'p')
+    int ch;
+    while ((ch = getopt::getopt(argc, argv, L"pi:")) != -1) {
+	switch (ch) {
+	case 'p':
 	    opt_p = true;
-	else if (argv[0][1] == 'i') {
-	    if (argv[0][2])
-		opt_i = argv[0] + 2;
-	    else if (argv[1]) {
-		opt_i = argv[1];
-		++argv, --argc;
-	    } else
-		usage();
+	    break;
+	case 'i':
+	    opt_i = getopt::optarg;
+	    break;
+	default:
+	    usage();
 	}
     }
+    argc -= getopt::optind;
+    argv += getopt::optind;
     if (!opt_p && !opt_i && argc < 2)
 	usage();
 
     try {
         set_dll_directories();
 	__pfnDliFailureHook2 = dll_failure_hook;
-	if (opt_p)
+	if (opt_p) {
 	    list_readable_types();
-	else if (opt_i)
+	} else if (opt_i) {
 	    show_format(opt_i);
-	else {
+	} else {
 	    uint32_t type = afutil::getTypesForExtension(argv[1]);
 	    process(argv[0], argv[1], type);
 	}

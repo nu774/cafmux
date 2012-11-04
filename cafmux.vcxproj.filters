@@ -4,22 +4,25 @@
     <ClCompile Include="bitstream.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="cafmux.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cautil.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="id3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="mpa.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="remux.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="strutil.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="cautil.cpp">
+    <ClCompile Include="win32util.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="win32util.cpp">
+    <ClCompile Include="wgetopt.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -75,6 +78,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="win32util.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wgetopt.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -81,11 +81,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="bitstream.cpp" />
+    <ClCompile Include="cafmux.cpp" />
     <ClCompile Include="cautil.cpp" />
     <ClCompile Include="id3.cpp" />
     <ClCompile Include="mpa.cpp" />
-    <ClCompile Include="remux.cpp" />
     <ClCompile Include="strutil.cpp" />
+    <ClCompile Include="wgetopt.cpp" />
     <ClCompile Include="win32util.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -103,6 +104,7 @@
     <ClInclude Include="strutil.h" />
     <ClInclude Include="util.h" />
     <ClInclude Include="version.h" />
+    <ClInclude Include="wgetopt.h" />
     <ClInclude Include="win32util.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
