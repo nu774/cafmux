@@ -24,20 +24,6 @@
 
 #define lseek64 _lseeki64
 
-class FilePositionSaver {
-    int m_fd;
-    int64_t m_offset;
-public:
-    FilePositionSaver(int fd): m_fd(fd)
-    {
-	m_offset = lseek64(m_fd, 0, SEEK_CUR);
-    }
-    ~FilePositionSaver()
-    {
-	lseek64(m_fd, m_offset, SEEK_SET);
-    }
-};
-
 namespace util {
     void shift_file_content(int fd, int64_t space)
     {
@@ -56,7 +42,7 @@ namespace util {
 namespace mp4 {
     bool test_if_mp4(int fd)
     {
-	FilePositionSaver _(fd);
+	util::FilePositionSaver _(fd);
 	lseek64(fd, 0, SEEK_SET);
 	char buf[8];
 	if (read(fd, buf, 8) != 8)
@@ -101,7 +87,7 @@ namespace mp4 {
     }
     bool get_iTunSMPB(int fd, std::string *result)
     {
-	FilePositionSaver _(fd);
+	util::FilePositionSaver _(fd);
 	lseek64(fd, 0, SEEK_SET);
 
 	uint32_t atom_size;
@@ -181,7 +167,7 @@ namespace caf {
     }
     bool get_info(int fd, std::vector<char> *info)
     {
-	FilePositionSaver _(fd);
+	util::FilePositionSaver _(fd);
 	lseek64(fd, 8, SEEK_SET);
 
 	uint64_t chunk_size;
