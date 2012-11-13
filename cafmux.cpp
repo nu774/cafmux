@@ -762,36 +762,87 @@ void list_readable_types()
 }
 
 static
-void set_dll_directories()
+std::wstring getAppleApplicationSupportPath()
 {
-    SetDllDirectoryW(L"");
-    DWORD sz = GetEnvironmentVariableW(L"PATH", 0, 0);
-    std::vector<wchar_t> vec(sz);
-    sz = GetEnvironmentVariableW(L"PATH", &vec[0], sz);
-    std::wstring searchPaths(&vec[0], &vec[sz]);
-
-    HKEY hKey;
+    HKEY hKey = 0;
     const wchar_t *subkey =
 	L"SOFTWARE\\Apple Inc.\\Apple Application Support";
-    if (SUCCEEDED(RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey, 0,
-				KEY_READ, &hKey))) {
+    LSTATUS rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey, 0,
+			       KEY_READ, &hKey);
+    if (rc == ERROR_SUCCESS) {
 	std::shared_ptr<HKEY__> hKeyPtr(hKey, RegCloseKey);
 	DWORD size;
-	if (SUCCEEDED(RegQueryValueExW(hKey, L"InstallDir", 0, 0, 0, &size))) {
+	rc = RegQueryValueExW(hKey, L"InstallDir", 0, 0, 0, &size);
+	if (rc == ERROR_SUCCESS) {
 	    std::vector<wchar_t> vec(size/sizeof(wchar_t));
-	    if (SUCCEEDED(RegQueryValueExW(hKey, L"InstallDir", 0, 0,
-			reinterpret_cast<LPBYTE>(&vec[0]), &size))) {
-		std::wstringstream ss;
-		ss << &vec[0] << L";" << searchPaths;
-		searchPaths = ss.str();
-	    }
+	    rc = RegQueryValueExW(hKey, L"InstallDir", 0, 0,
+				  reinterpret_cast<LPBYTE>(&vec[0]), &size);
+	    if (rc == ERROR_SUCCESS)
+		return &vec[0];
 	}
     }
-    std::wstring dir = win32::get_module_directory() + L"QTfiles";
-    std::wstringstream ss;
-    ss << dir << L";" << searchPaths;
-    searchPaths = ss.str();
-    SetEnvironmentVariableW(L"PATH", searchPaths.c_str());
+    return L"";
+}
+
+static
+std::string getCoreAudioToolboxVersion(HMODULE hDll)
+{
+    HRSRC hRes = FindResourceExW(hDll,
+			         RT_VERSION,
+			         MAKEINTRESOURCEW(VS_VERSION_INFO),
+				 MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US));
+    std::string data;
+    {
+	DWORD cbres = SizeofResource(hDll, hRes);
+	HGLOBAL hMem = LoadResource(hDll, hRes);
+	if (hMem) {
+	    char *pc = static_cast<char*>(LockResource(hMem));
+	    if (pc && cbres)
+		data.assign(pc, cbres);
+	    FreeResource(hMem);
+	}
+    }
+    // find dwSignature of VS_FIXEDFILEINFO
+    std::stringstream ss;
+    size_t pos = data.find("\xbd\x04\xef\xfe");
+    if (pos != std::string::npos) {
+	VS_FIXEDFILEINFO vfi;
+	std::memcpy(&vfi, data.c_str() + pos, sizeof vfi);
+	WORD v[4];
+	v[0] = HIWORD(vfi.dwFileVersionMS);
+	v[1] = LOWORD(vfi.dwFileVersionMS);
+	v[2] = HIWORD(vfi.dwFileVersionLS);
+	v[3] = LOWORD(vfi.dwFileVersionLS);
+	ss << v[0] << "." << v[1] << "." << v[2] << "." << v[3];
+    }
+    return ss.str();
+}
+
+static
+HMODULE load_coreaudio_toolbox()
+{
+    std::wstring path = win32::get_module_directory();
+    std::vector<std::wstring> candidates;
+    candidates.push_back(path);
+    candidates.push_back(path + L"QTfiles\\");
+    if ((path = getAppleApplicationSupportPath()) != L"") {
+	if (path.back() != L'\\')
+	    path.push_back(L'\\');
+	candidates.push_back(path);
+    }
+    std::vector<std::wstring>::const_iterator it;
+    HMODULE hmod = 0;
+    for (it = candidates.begin(); it != candidates.end(); ++it) {
+	path = *it + L"CoreAudioToolbox.dll";
+	hmod = LoadLibraryExW(path.c_str(), 0,
+			      LOAD_WITH_ALTERED_SEARCH_PATH);
+	if (hmod)
+	    break;
+    }
+    if (!hmod) {
+	throw std::runtime_error("Cannot load CoreAudioToolbox.dll");
+    }
+    return hmod;
 }
 
 static
@@ -844,8 +895,10 @@ int wmain(int argc, wchar_t **argv)
 	usage();
 
     try {
-        set_dll_directories();
 	__pfnDliFailureHook2 = dll_failure_hook;
+	std::shared_ptr<HINSTANCE__> C(load_coreaudio_toolbox(), FreeLibrary);
+	std::string ver = getCoreAudioToolboxVersion(C.get());
+	std::fwprintf(stderr, L"CoreAudioToolbox %hs\n", ver.c_str());
 	if (opt_p) {
 	    list_readable_types();
 	} else if (opt_i) {
