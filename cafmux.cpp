@@ -579,11 +579,9 @@ private:
 	mp4::get_priming_info(ifd(), &itinfo);
 
 	if (itinfo.mPrimingFrames || itinfo.mRemainderFrames) {
-	    uint64_t packet_count = m_iaf.getAudioDataPacketCount();
-
 	    uint64_t itotal = itinfo.mNumberValidFrames +
 		itinfo.mPrimingFrames + itinfo.mRemainderFrames;
-	    uint64_t ptotal = m_asbd.mFramesPerPacket * packet_count;
+	    uint64_t ptotal = m_asbd.mFramesPerPacket * m_packet_count;
 
 	    if (m_asbd.mFormatID == FOURCC('a','a','c','h') ||
 		m_asbd.mFormatID == FOURCC('a','a','c','p'))
