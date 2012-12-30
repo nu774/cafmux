@@ -447,16 +447,6 @@ public:
     {
 	m_packet_count = m_current_packet;
 	AudioFilePacketTableInfo &pi = m_packet_info;
-	uint64_t total = m_packet_count * m_asbd.mFramesPerPacket;
-	if ((pi.mPrimingFrames || pi.mRemainderFrames) &&
-	    !pi.mNumberValidFrames) {
-	    /*
-	     * Take care of iTunSMPB in MP3.
-	     * CoreAudio fills only mPrimingFrames and mRemainderFrames
-	     */
-	    pi.mNumberValidFrames =
-		total - pi.mPrimingFrames - pi.mRemainderFrames;
-	}
 	if (is_mpeg(m_oformat)) {
 	    std::vector<uint8_t> xing_header;
 	    if (!isCBR())
@@ -559,6 +549,7 @@ private:
     }
     void getPacketTableInfo(AudioFilePacketTableInfo *info)
     {
+        uint64_t ptotal = m_asbd.mFramesPerPacket * m_packet_count;
 	/*
 	 * In case of AAC in MP4, we want to read iTunSMPB ourself.
 	 * Otherwise, go the standard way.
@@ -569,7 +560,17 @@ private:
 		      m_asbd.mFormatID == FOURCC('p','a','a','c'));
 	if (!isAAC || !mp4::test_if_mp4(ifd())) {
 	    try {
-		m_iaf.getPacketTableInfo(info);
+                m_iaf.getPacketTableInfo(info);
+                AudioFilePacketTableInfo &pi = *info;
+                if ((pi.mPrimingFrames || pi.mRemainderFrames) &&
+                    !pi.mNumberValidFrames) {
+                    /*
+                     * Take care of iTunSMPB in MP3.
+                     * CoreAudio fills only mPrimingFrames and mRemainderFrames
+                     */
+                    pi.mNumberValidFrames =
+                        ptotal - pi.mPrimingFrames - pi.mRemainderFrames;
+                }
 	    } catch (const CoreAudioException &e) {
 		if (!e.isNotSupportedError())
 		    throw;
@@ -582,7 +583,6 @@ private:
 	if (itinfo.mPrimingFrames || itinfo.mRemainderFrames) {
 	    uint64_t itotal = itinfo.mNumberValidFrames +
 		itinfo.mPrimingFrames + itinfo.mRemainderFrames;
-	    uint64_t ptotal = m_asbd.mFramesPerPacket * m_packet_count;
 
 	    if (m_asbd.mFormatID == FOURCC('a','a','c','h') ||
 		m_asbd.mFormatID == FOURCC('a','a','c','p'))
