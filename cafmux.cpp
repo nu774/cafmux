@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <iomanip>
+#include <assert.h>
 #include <io.h>
 #include <fcntl.h>
 #define NOMINMAX
@@ -297,6 +298,7 @@ class Remuxer {
     uint64_t m_current_packet;
     uint64_t m_packet_count;
     uint64_t m_bytes_processed;
+    uint64_t m_offset;
     std::vector<uint64_t> m_packet_pos;
     std::vector<uint8_t> m_buffer;
     std::vector<AudioStreamPacketDescription> m_aspd;
@@ -306,7 +308,8 @@ class Remuxer {
 public:
     Remuxer(const std::wstring &ifilename, const std::wstring &ofilename,
 	    uint32_t oformat)
-	: m_oformat(oformat), m_current_packet(0), m_bytes_processed(0)
+	: m_oformat(oformat), m_current_packet(0), m_offset(0),
+	  m_bytes_processed(0)
     {
 	m_ifp = win32::fopen(ifilename, L"rb");
 	AudioFileID iafid;
@@ -338,7 +341,7 @@ public:
 		throw std::runtime_error(ss.str());
 	    }
 	}
-        uint32_t max_packet_size = m_iaf.getMaximumPacketSize();
+	uint32_t max_packet_size = m_iaf.getMaximumPacketSize();
 	m_packet_count = m_iaf.getAudioDataPacketCount();
 	uint32_t packet_at_once = 1;
 	{
@@ -394,13 +397,63 @@ public:
 
     uint64_t packetCount() const { return m_packet_count; }
     uint64_t currentPacket() const { return m_current_packet; }
+    double sampleRate() const { return m_asbd.mSampleRate; }
+
+    void trim(uint64_t begin, uint64_t end)
+    {
+	assert(m_current_packet == 0);
+	if (begin >= end)
+	    throw std::runtime_error("Invalid trim: start >= end ");
+	int fpp = m_asbd.mFramesPerPacket;
+	int64_t sample_count;
+	if (m_packet_info.mNumberValidFrames)
+	    sample_count = m_packet_info.mNumberValidFrames;
+	else
+	    sample_count = m_packet_count * fpp;
+	if (begin > sample_count)
+	    throw std::runtime_error("Trim start exceeds the length");
+	if (end > sample_count)
+	    end = sample_count;
+
+	int64_t start_sample = begin + m_packet_info.mPrimingFrames;
+	int preroll_packets = 0;
+	switch (m_asbd.mFormatID) {
+	case kAudioFormatLinearPCM: preroll_packets = 0; break;
+	case kAudioFormatMPEG4AAC: preroll_packets = 2; break;
+	case kAudioFormatMPEGLayer3: preroll_packets = 2; break;
+	default:
+	    throw std::runtime_error("Trimming is supported only for "
+				     "LPCM, MP3, and LC-AAC");
+	}
+	int preroll_samples = preroll_packets * fpp;
+	if (preroll_samples < m_packet_info.mPrimingFrames)
+	    preroll_samples = m_packet_info.mPrimingFrames;
+	int64_t start_packet =
+	    std::max(start_sample - preroll_samples, 0LL) / fpp;
+	int64_t start_sample_delay = start_sample - (start_packet * fpp);
+	int64_t final_sample = end + m_packet_info.mPrimingFrames - 1;
+	int64_t final_packet = final_sample / fpp;
+	m_offset = start_packet;
+	m_packet_count = final_packet - start_packet + 1;
+	if (m_asbd.mFramesPerPacket != 1) {
+	    m_packet_info.mPrimingFrames = start_sample_delay;
+	    m_packet_info.mNumberValidFrames = end - begin;
+	    m_packet_info.mRemainderFrames =
+		m_packet_count * fpp - start_sample_delay - end + begin;
+	}
+    }
 
     int process()
     {
 	UInt32 nbytes = m_buffer.size();
 	UInt32 npackets = m_aspd.size();
+	int64_t rest = m_packet_count - m_current_packet;
+	if (rest < npackets)
+	    npackets = rest;
+	if (!npackets)
+	    return 0;
 	CHECKCA(AudioFileReadPacketData(m_iaf, false, &nbytes, &m_aspd[0],
-					m_current_packet, &npackets,
+					m_offset + m_current_packet, &npackets,
 					&m_buffer[0]));
 	if (!npackets)
 	    return 0;
@@ -549,7 +602,7 @@ private:
     }
     void getPacketTableInfo(AudioFilePacketTableInfo *info)
     {
-        uint64_t ptotal = m_asbd.mFramesPerPacket * m_packet_count;
+	uint64_t ptotal = m_asbd.mFramesPerPacket * m_packet_count;
 	/*
 	 * In case of AAC in MP4, we want to read iTunSMPB ourself.
 	 * Otherwise, go the standard way.
@@ -560,17 +613,17 @@ private:
 		      m_asbd.mFormatID == FOURCC('p','a','a','c'));
 	if (!isAAC || !mp4::test_if_mp4(ifd())) {
 	    try {
-                m_iaf.getPacketTableInfo(info);
-                AudioFilePacketTableInfo &pi = *info;
-                if ((pi.mPrimingFrames || pi.mRemainderFrames) &&
-                    !pi.mNumberValidFrames) {
-                    /*
-                     * Take care of iTunSMPB in MP3.
-                     * CoreAudio fills only mPrimingFrames and mRemainderFrames
-                     */
-                    pi.mNumberValidFrames =
-                        ptotal - pi.mPrimingFrames - pi.mRemainderFrames;
-                }
+		m_iaf.getPacketTableInfo(info);
+		AudioFilePacketTableInfo &pi = *info;
+		if ((pi.mPrimingFrames || pi.mRemainderFrames) &&
+		    !pi.mNumberValidFrames) {
+		    /*
+		     * Take care of iTunSMPB in MP3.
+		     * CoreAudio fills only mPrimingFrames and mRemainderFrames
+		     */
+		    pi.mNumberValidFrames =
+			ptotal - pi.mPrimingFrames - pi.mRemainderFrames;
+		}
 	    } catch (const CoreAudioException &e) {
 		if (!e.isNotSupportedError())
 		    throw;
@@ -686,10 +739,53 @@ private:
 };
 
 static
+bool parse_timespec(const wchar_t *spec, double sample_rate, int64_t *result)
+{
+    int hh, mm, ssi, ff = 0, sign = 1;
+    wchar_t a, b;
+    double ss;
+    if (!spec || !*spec)
+	return false;
+    if (std::swscanf(spec, L"%lld%c%c", result, &a, &b) == 2 && a == L's')
+	return true;
+    if (spec[0] == L'-') {
+	sign = -1;
+	++spec;
+    }
+    if (std::swscanf(spec, L"%d:%d:%lf%c", &hh, &mm, &ss, &a) == 3)
+	ss = ss + ((hh * 60.0) + mm) * 60.0;
+    else if (std::swscanf(spec, L"%d:%lf%c", &mm, &ss, &a) == 2)
+	ss = ss + mm * 60.0;
+    else if (std::swscanf(spec, L"%lf%c", &ss, &a) == 1)
+	;
+    else if (std::swscanf(spec, L"%d:%d:%d%c", &mm, &ssi, &ff, &a) == 4 &&
+	     a == L'f')
+	ss = ff / 75.0 + ((mm * 60.0) + ssi);
+    else if (std::swscanf(spec, L"%d:%d%c", &ssi, &ff, &a) == 3 && a == L'f')
+	ss = ff / 75.0 + ssi;
+    else if (std::swscanf(spec, L"%d%c", &ff, &a) == 2 && a == L'f')
+	ss = ff / 75.0;
+    else
+	return false;
+
+    *result = sign * static_cast<int64_t>(sample_rate * ss + .5);
+    return true;
+}
+    
+static
 void process(const std::wstring &ifilename, const std::wstring &ofilename,
-	     uint32_t oformat)
+	     uint32_t oformat, const wchar_t *start, const wchar_t *end)
 {
     Remuxer remuxer(ifilename, ofilename, oformat);
+
+    int64_t start_pos = 0, end_pos = INT64_MAX;
+    if (start && !parse_timespec(start, remuxer.sampleRate(), &start_pos))
+	throw std::runtime_error("Invalid timespec for -s");
+    if (end && !parse_timespec(end, remuxer.sampleRate(), &end_pos))
+	throw std::runtime_error("Invalid timespec for -e");
+    if (start || end)
+	remuxer.trim(start_pos, end_pos);
+
     int percent = 0;
     try {
 	uint64_t total = remuxer.packetCount();
@@ -787,8 +883,8 @@ static
 std::string getCoreAudioToolboxVersion(HMODULE hDll)
 {
     HRSRC hRes = FindResourceExW(hDll,
-			         RT_VERSION,
-			         MAKEINTRESOURCEW(VS_VERSION_INFO),
+				 RT_VERSION,
+				 MAKEINTRESOURCEW(VS_VERSION_INFO),
 				 MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US));
     std::string data;
     {
@@ -857,7 +953,19 @@ void usage()
 L"cafmux %hs\n"
 L"usage: cafmux -p             (print available formats)\n"
 L"       cafmux -i INFILE      (print audio format of INFILE)\n"
-L"       cafmux INFILE OUTFILE (remux INFILE to OUTFILE)\n"
+L"       cafmux [-s START][-e END] INFILE OUTFILE (remux INFILE to OUTFILE)\n"
+L"\n"
+L"when given -s or -e, sub portion of the INFILE is extracted.\n"
+L"when -s is omitted, extraction start from the beginning of the input.\n"
+L"when -e is omitted, extraction ends at the end of the input.\n"
+L"(trimming by -s and/or -e is only available for LPCM, LC-AAC, and MP3)\n"
+L"\n"
+L"START/END accept following formats:\n"
+L"  <integer>s             Offset in number of samples, followed by \"s\"\n"
+L"  [[hh:]mm:]ss[.sss..]   Offset in seconds.\n"
+L"                         Parts enclosed by brackets can be ommited\n"
+L"  <[[hh:]mm:]ff>f        Offset in CD frames, followed by \"f\"\n"
+L"                         (1 frame = 1/75 second).\n"
     , cafmux_version);
     std::exit(1);
 }
@@ -873,16 +981,22 @@ int wmain(int argc, wchar_t **argv)
     std::setbuf(stderr, 0);
 
     bool opt_p = false;
-    wchar_t *opt_i = 0;
+    wchar_t *opt_i = 0, *opt_s = 0, *opt_e = 0;
 
     int ch;
-    while ((ch = getopt::getopt(argc, argv, L"pi:")) != -1) {
+    while ((ch = getopt::getopt(argc, argv, L"pi:s:e:")) != -1) {
 	switch (ch) {
 	case 'p':
 	    opt_p = true;
 	    break;
 	case 'i':
 	    opt_i = getopt::optarg;
+	    break;
+	case 's':
+	    opt_s = getopt::optarg;
+	    break;
+	case 'e':
+	    opt_e = getopt::optarg;
 	    break;
 	default:
 	    usage();
@@ -904,7 +1018,7 @@ int wmain(int argc, wchar_t **argv)
 	    show_format(opt_i);
 	} else {
 	    uint32_t type = afutil::getTypesForExtension(argv[1]);
-	    process(argv[0], argv[1], type);
+	    process(argv[0], argv[1], type, opt_s, opt_e);
 	}
 	return 0;
     } catch (const std::exception & e) {
