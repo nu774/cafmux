@@ -18,7 +18,7 @@ void MPAHeader::fill(const uint8_t *data)
     this->m_original = bs.get(1);
     this->m_emphasis = bs.get(2);
     if (this->m_version == 1)
-	throw std::runtime_error("Unsupported MPEG audio version");
+        throw std::runtime_error("Unsupported MPEG audio version");
 }
 
 void MPAHeader::get_bytes(uint8_t *data) const
