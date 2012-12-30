@@ -338,6 +338,7 @@ public:
 		throw std::runtime_error(ss.str());
 	    }
 	}
+        uint32_t max_packet_size = m_iaf.getMaximumPacketSize();
 	m_packet_count = m_iaf.getAudioDataPacketCount();
 	uint32_t packet_at_once = 1;
 	{
