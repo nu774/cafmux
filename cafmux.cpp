@@ -395,6 +395,11 @@ public:
         setupAudioFile();
     }
 
+    ~Remuxer()
+    {
+        m_iaf.close();
+        m_oaf.close();
+    }
     uint64_t packetCount() const { return m_packet_count; }
     uint64_t currentPacket() const { return m_current_packet; }
     double sampleRate() const { return m_asbd.mSampleRate; }
@@ -581,7 +586,8 @@ private:
                                   id3.size());
             } else {
                 try {
-                    m_oaf.setInfoDictionary(dict.get());
+                    CFIndex n = CFDictionaryGetCount(dict.get());
+                    if (n) m_oaf.setInfoDictionary(dict.get());
                 } catch (const CoreAudioException &e) {
                     if (!e.isNotSupportedError())
                         throw;
