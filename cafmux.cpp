@@ -970,7 +970,7 @@ L"START/END accept following formats:\n"
 L"  <integer>s             Offset in number of samples, followed by \"s\"\n"
 L"  [[hh:]mm:]ss[.sss..]   Offset in seconds.\n"
 L"                         Parts enclosed by brackets can be ommited\n"
-L"  <[[hh:]mm:]ff>f        Offset in CD frames, followed by \"f\"\n"
+L"  <[[mm:]ss:]ff>f        Offset in CD frames, followed by \"f\"\n"
 L"                         (1 frame = 1/75 second).\n"
     , cafmux_version);
     std::exit(1);
