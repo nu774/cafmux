@@ -96,12 +96,20 @@ struct MPAHeader {
         return (spfdiv8[version_index()][layer_index()] * bitrate() * 1000
             / sampling_rate() + m_padding) * slot_size[layer_index()];
     }
-    uint32_t side_information_size() const
+    uint16_t side_info_start() const
+    {
+        return m_protection ? 6 : 4;
+    }
+    uint32_t side_info_size() const
     {
         static const uint32_t tab[3][2] = {
             { 32, 17 }, { 17, 9 }, { 17, 9 }
         };
         return tab[version_index()][is_mono()];
+    }
+    uint32_t side_info_end() const
+    {
+        return side_info_start() + side_info_size();
     }
 };
 

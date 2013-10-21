@@ -420,46 +420,86 @@ public:
         if (end > sample_count)
             end = sample_count;
 
-        int64_t start_sample = begin + m_packet_info.mPrimingFrames;
-        int preroll_packets = 0;
+        int64_t start = begin;
+        unsigned enc_delay = m_packet_info.mPrimingFrames;
+
+        int overlapped_frames = 0; // required for MDCT based codec
+
         switch (m_asbd.mFormatID) {
-        case kAudioFormatLinearPCM: preroll_packets = 0; break;
-        case kAudioFormatMPEG4AAC: preroll_packets = 2; break;
-        case kAudioFormatMPEGLayer3: preroll_packets = 2; break;
+        case kAudioFormatMPEGLayer3:
+            if (!enc_delay)
+                throw std::runtime_error("Cannot detect enc_delay of input. "
+                                         "Cannot trim without them.");
+            overlapped_frames = 576;
+            break;
+        case kAudioFormatMPEG4AAC:
+            if (!enc_delay)
+                throw std::runtime_error("Cannot detect enc_delay of input. "
+                                         "Cannot trim without them.");
+            if (m_oformat == kAudioFileAAC_ADTSType ||
+                m_oformat == kAudioFileMPEG4Type)
+                throw std::runtime_error("Cannot trim to ADTS or MP4. "
+                                         "Use m4a/m4b/caf instead");
+            overlapped_frames = fpp;
+            break;
+        case kAudioFormatMPEGLayer1:
+        case kAudioFormatMPEGLayer2:
+        case kAudioFormatMPEG4AAC_HE:
+        case kAudioFormatMPEG4AAC_HE_V2:
+            {
+                std::stringstream ss;
+                ss << "Trimming of this format is not supported: ";
+                ss << strutil::w2us(afutil::getASBDFormatName(m_asbd));
+                throw std::runtime_error(ss.str().c_str());
+            }
         default:
-            throw std::runtime_error("Trimming is supported only for "
-                                     "LPCM, MP3, and LC-AAC");
+            {
+                std::stringstream ss;
+                ss << "Trimming of this format is only available for caf output: ";
+                ss << strutil::w2us(afutil::getASBDFormatName(m_asbd));
+                if (fpp != 1 && m_oformat != kAudioFileCAFType)
+                    throw std::runtime_error(ss.str().c_str());
+            }
         }
-        int preroll_samples = preroll_packets * fpp;
-        if (preroll_samples < m_packet_info.mPrimingFrames)
-            preroll_samples = m_packet_info.mPrimingFrames;
         int64_t start_packet =
-            std::max(start_sample - preroll_samples, 0LL) / fpp;
-        int64_t start_sample_delay = start_sample - (start_packet * fpp);
-        int64_t final_sample = end + m_packet_info.mPrimingFrames - 1;
-        int64_t final_packet = final_sample / fpp;
+            std::max(start + enc_delay - overlapped_frames, 0LL) / fpp;
+        /*
+         * handle aditional inter frame dependency due to bit reservoir of mp3
+         */
+        if (m_asbd.mFormatID == kAudioFormatMPEGLayer3) {
+            unsigned main_data_begin;
+            unsigned size;
+            unsigned sum = 0;
+            getMP3FrameInfo(start_packet, &main_data_begin, 0);
+            for (; start_packet > 0 && sum < main_data_begin; sum += size)
+                getMP3FrameInfo(--start_packet, 0, &size);
+        }
+        int64_t new_enc_delay = start + enc_delay - (start_packet * fpp);
+        int64_t final_frame = end + enc_delay + fpp;
+        if (m_asbd.mFormatID == kAudioFormatMPEGLayer3)
+            final_frame += fpp;
+        int64_t final_packet = (final_frame - 1)/ fpp;
+        if (final_packet > m_packet_count)
+            final_packet = m_packet_count;
+
         m_offset = start_packet;
-        m_packet_count = final_packet - start_packet + 1;
-        if (m_asbd.mFramesPerPacket != 1) {
-            m_packet_info.mPrimingFrames = start_sample_delay;
+        m_packet_count = final_packet - start_packet;
+        if (m_asbd.mFramesPerPacket > 1) {
+            m_packet_info.mPrimingFrames = new_enc_delay;
             m_packet_info.mNumberValidFrames = end - begin;
             m_packet_info.mRemainderFrames =
-                m_packet_count * fpp - start_sample_delay - end + begin;
+                m_packet_count * fpp - new_enc_delay - end + begin;
         }
     }
 
     int process()
     {
-        UInt32 nbytes = m_buffer.size();
-        UInt32 npackets = m_aspd.size();
+        UInt32 nbytes = 0;
         int64_t rest = m_packet_count - m_current_packet;
-        if (rest < npackets)
-            npackets = rest;
-        if (!npackets)
+        if (!rest)
             return 0;
-        CHECKCA(AudioFileReadPacketData(m_iaf, false, &nbytes, &m_aspd[0],
-                                        m_offset + m_current_packet, &npackets,
-                                        &m_buffer[0]));
+        UInt32 npackets =
+            readPackets(m_offset + m_current_packet, rest, &nbytes);
         if (!npackets)
             return 0;
         if (m_asbd.mFormatID == FOURCC('a','l','a','c') &&
@@ -662,6 +702,15 @@ private:
                 *info = itinfo;
         }
     }
+    unsigned readPackets(uint64_t pos, unsigned npackets, UInt32 *nbytes)
+    {
+        *nbytes = m_buffer.size();
+        UInt32 n = std::min(static_cast<unsigned>(m_aspd.size()), npackets);
+        if (n > 0)
+            CHECKCA(AudioFileReadPacketData(m_iaf, false, nbytes, &m_aspd[0],
+                                            pos, &n, &m_buffer[0]));
+        return n;
+    }
     void getTags(CFDictionaryPtr *dict)
     {
         uint32_t format = m_iaf.getFileFormat();
@@ -712,13 +761,14 @@ private:
     {
         MPAHeader header(&m_buffer[0]);
         header.m_bitrate = 6;
+        header.m_protection = 0;
         while (header.frame_size() < 176) {
             ++header.m_bitrate;
         }
         header.m_padding = 0;
         std::vector<uint8_t> buf(header.frame_size());
         header.get_bytes(&buf[0]);
-        size_t pos = 4 + header.side_information_size();
+        size_t pos = header.side_info_end();
         std::memcpy(&buf[pos], "Xing", 4), pos += 4;
         /* FRAMES_FLAG | BYTES_FLAG | TOC_FLAG */
         std::memcpy(&buf[pos], "\x00\x00\x00\x07", 4), pos += 4;
@@ -741,6 +791,21 @@ private:
         std::sprintf(reinterpret_cast<char*>(&buf[pos]),
                      "cafmux %s", cafmux_version);
         result->swap(buf);
+    }
+    void getMP3FrameInfo(uint64_t packet, unsigned *main_data_begin,
+                         unsigned *main_data_size)
+    {
+        UInt32 nbytes;
+        readPackets(packet, 1, &nbytes);
+        MPAHeader hdr(&m_buffer[0]);
+        unsigned sis = hdr.side_info_start();
+        unsigned mdb = m_buffer[sis];
+        if (hdr.version_index() == 0)
+            mdb  = (mdb << 1) | ((m_buffer[sis + 1] & 0x80) >> 7);
+        if (main_data_begin)
+            *main_data_begin = mdb;
+        if (main_data_size)
+            *main_data_size  = hdr.frame_size() - hdr.side_info_end();
     }
 };
 
