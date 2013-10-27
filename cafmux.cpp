@@ -108,6 +108,7 @@ namespace mp4 {
             }
             int64_t limit = atom_size;
             int64_t pos = lseek64(fd, 0, SEEK_CUR);
+            int64_t end = pos + limit;
             bool found = false;
             std::vector<char> data;
             while ((atom_size = next_box(fd, name, &limit)) != 0) {
@@ -115,8 +116,9 @@ namespace mp4 {
                     if (atom_size < 12) // 4 + strlen("iTunSMPB")
                         break;
                     std::vector<char> buf(atom_size);
-                    if (read(fd, &buf[0], atom_size) != 12)
+                    if (read(fd, &buf[0], atom_size) != atom_size)
                         return false;
+                    limit -= atom_size;
                     if (std::memcmp(&buf[4], "iTunSMPB", 8))
                         break;
                     found = true;
@@ -124,8 +126,11 @@ namespace mp4 {
                     data.resize(atom_size);
                     if (read(fd, &data[0], atom_size) != atom_size)
                         return false;
-                } else if (lseek64(fd, atom_size, SEEK_CUR) < 0) {
-                    return false;
+                    limit -= atom_size;
+                } else {
+                    if (lseek64(fd, atom_size, SEEK_CUR) < 0)
+                        return false;
+                    limit -= atom_size;
                 }
             }
             if (found) {
@@ -133,7 +138,7 @@ namespace mp4 {
                 result->swap(ss);
                 return true;
             }
-            if (lseek64(fd, pos + limit, SEEK_SET) < 0)
+            if (lseek64(fd, end, SEEK_SET) < 0)
                 return false;
         }
         return false;
