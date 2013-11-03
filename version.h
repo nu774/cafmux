@@ -1,4 +1,4 @@
 #ifndef VERSION_H
 #define VERSION_H
-const char *cafmux_version = "0.16";
+const char *cafmux_version = "0.17";
 #endif
