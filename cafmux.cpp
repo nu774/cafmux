@@ -50,7 +50,7 @@ namespace mp4 {
             return false;
         return std::memcmp(&buf[4], "ftyp", 4) == 0;
     }
-    uint32_t next_box(int fd, char *name, int64_t *rest)
+    int next_box(int fd, char *name, uint32_t *size, int64_t *rest)
     {
         if (rest && *rest < 8)
             return 0;
@@ -60,14 +60,15 @@ namespace mp4 {
         atom_size = util::b2host32(atom_size);
         if (rest)
             *rest -= atom_size;
-        return atom_size - 8;
+        *size = atom_size - 8;
+        return 1;
     }
     uint32_t seek_to_box(int fd, const char *name)
     {
         for (;;) {
             uint32_t atom_size;
             char atom_name[4];
-            if ((atom_size = next_box(fd, atom_name, 0)) == 0)
+            if (!next_box(fd, atom_name, &atom_size, 0))
                 return 0;
             if (!std::memcmp(atom_name, name, 4))
                 return atom_size;
@@ -100,7 +101,7 @@ namespace mp4 {
         if (!ilst_size)
             return false;
         char name[4];
-        while ((atom_size = next_box(fd, name, &ilst_size)) != 0) {
+        while (next_box(fd, name, &atom_size, &ilst_size)) {
             if (std::memcmp(name, "----", 4)) {
                 if (lseek64(fd, atom_size, SEEK_CUR) < 0)
                     return false;
@@ -111,7 +112,7 @@ namespace mp4 {
             int64_t end = pos + limit;
             bool found = false;
             std::vector<char> data;
-            while ((atom_size = next_box(fd, name, &limit)) != 0) {
+            while (next_box(fd, name, &atom_size, &limit)) {
                 if (!std::memcmp(name, "name", 4)) {
                     if (atom_size < 12) // 4 + strlen("iTunSMPB")
                         break;
@@ -310,6 +311,7 @@ class Remuxer {
     AudioStreamBasicDescription m_asbd;
     uint32_t m_channel_layout_tag;
     AudioFilePacketTableInfo m_packet_info;
+    int m_dualrate_sbr;
 public:
     Remuxer(const std::wstring &ifilename, const std::wstring &ofilename,
             uint32_t oformat)
@@ -332,6 +334,17 @@ public:
         m_iaf.getFormatList(&aflist);
         m_asbd = aflist[0].mASBD;
         m_channel_layout_tag = aflist[0].mChannelLayoutTag;
+        if (m_asbd.mFormatID == FOURCC('a','a','c','h') ||
+            m_asbd.mFormatID == FOURCC('a','a','c','p'))
+        {
+            for (size_t i = 0; i < aflist.size(); ++i) {
+                if (aflist[i].mASBD.mFormatID == FOURCC('a','a','c',' ')) {
+                    AudioStreamBasicDescription lcasbd = aflist[i].mASBD;
+                    m_dualrate_sbr =
+                        (lcasbd.mSampleRate == m_asbd.mSampleRate / 2.0);
+                }
+            }
+        }
 
         if (is_mpeg(oformat)) {
             if (m_asbd.mFormatID != FOURCC('.','m','p','1') &&
@@ -687,11 +700,12 @@ private:
         if (itinfo.mPrimingFrames || itinfo.mRemainderFrames) {
             uint64_t itotal = itinfo.mNumberValidFrames +
                 itinfo.mPrimingFrames + itinfo.mRemainderFrames;
+            *info = itinfo;
 
             if (m_asbd.mFormatID == FOURCC('a','a','c','h') ||
                 m_asbd.mFormatID == FOURCC('a','a','c','p'))
             {
-                if (itotal == ptotal) {
+                if (this->m_dualrate_sbr && itotal == ptotal) {
                     /*
                      * Looks like iTunSMPB of the source is counted in 
                      * upsampled scale
@@ -701,10 +715,8 @@ private:
                     itinfo.mRemainderFrames = ptotal / 2
                         - itinfo.mPrimingFrames - itinfo.mNumberValidFrames;
                     *info = itinfo;
-                } else if (itotal == ptotal / 2)
-                    *info = itinfo;
-            } else if (itotal == ptotal)
-                *info = itinfo;
+                }
+            }
         }
     }
     unsigned readPackets(uint64_t pos, unsigned npackets, UInt32 *nbytes)
