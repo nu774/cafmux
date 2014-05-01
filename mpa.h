@@ -96,9 +96,13 @@ struct MPAHeader {
         return (spfdiv8[version_index()][layer_index()] * bitrate() * 1000
             / sampling_rate() + m_padding) * slot_size[layer_index()];
     }
+    bool has_crc() const
+    {
+        return m_protection ? false : true;
+    }
     uint16_t side_info_start() const
     {
-        return m_protection ? 6 : 4;
+        return has_crc() ? 6 : 4;
     }
     uint32_t side_info_size() const
     {
