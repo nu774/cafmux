@@ -445,15 +445,9 @@ public:
 
         switch (m_asbd.mFormatID) {
         case kAudioFormatMPEGLayer3:
-            if (!enc_delay)
-                throw std::runtime_error("Cannot detect enc_delay of input. "
-                                         "Cannot trim without them.");
             overlapped_frames = 576;
             break;
         case kAudioFormatMPEG4AAC:
-            if (!enc_delay)
-                throw std::runtime_error("Cannot detect enc_delay of input. "
-                                         "Cannot trim without them.");
             if (m_oformat == kAudioFileAAC_ADTSType ||
                 m_oformat == kAudioFileMPEG4Type)
                 throw std::runtime_error("Cannot trim to ADTS or MP4. "
