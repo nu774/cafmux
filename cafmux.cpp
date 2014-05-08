@@ -772,7 +772,7 @@ private:
     {
         MPAHeader header(&m_buffer[0]);
         header.m_bitrate = 6;
-        header.m_protection = 0;
+        header.m_protection = 1;
         while (header.frame_size() < 176) {
             ++header.m_bitrate;
         }
