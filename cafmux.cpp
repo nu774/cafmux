@@ -704,7 +704,8 @@ private:
                      * Looks like iTunSMPB of the source is counted in 
                      * upsampled scale
                      */
-                    itinfo.mPrimingFrames >>= 1;
+                    itinfo.mPrimingFrames =
+                        std::max(0, (int)itinfo.mPrimingFrames / 2 - 481);
                     itinfo.mNumberValidFrames >>= 1;
                     itinfo.mRemainderFrames = ptotal / 2
                         - itinfo.mPrimingFrames - itinfo.mNumberValidFrames;
